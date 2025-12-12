@@ -1,5 +1,9 @@
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import path from 'path'
+
 export default defineConfig({
-  base: './',  // <-- ADD THIS LINE
+  base: './', // needed for Vercel deployment
   plugins: [react()],
   resolve: {
     alias: {
@@ -24,4 +28,3 @@ export default defineConfig({
     }
   }
 })
-

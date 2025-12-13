@@ -158,8 +158,6 @@ export default function RentalDetails() {
       
       if (allMedia.length > 0 && allMedia[0].public_url) {
         videoUrl = allMedia[0].public_url;
-      } else if (rental.public_url) {
-        videoUrl = rental.public_url;
       }
 
       const cacheBuster = `?v=${new Date().getTime()}`;
@@ -174,7 +172,7 @@ export default function RentalDetails() {
       window.open(whatsappUrl, '_blank');
 
     } catch (err) {
-      console.error('❌ Error sharing via WhatsApp:', err);
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
       alert(`Failed to share via WhatsApp. Error: ${err.message}`);
     } finally {
       setIsSharing(false);
@@ -213,7 +211,7 @@ export default function RentalDetails() {
         .eq('id', rental.id)
         .select(`
             *,
-            vehicle:saharax_0u4w4d_vehicles(
+            vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(
               id,
               name,
               model,
@@ -229,7 +227,7 @@ export default function RentalDetails() {
       alert('✅ Payment status updated to "Paid"!');
       
     } catch (err) {
-      console.error('❌ Error marking as paid:', err);
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
       alert(`Failed to update payment status. Error: ${err.message}`);
     } finally {
       setIsUpdatingPayment(false);
@@ -248,13 +246,13 @@ export default function RentalDetails() {
             updated_at: new Date().toISOString() 
         })
         .eq('id', rental.id)
-        .select('*, vehicle:saharax_0u4w4d_vehicles(*)')
+        .select('*, vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(*)')
         .single();
       if (error) throw error;
       setRental(data);
       alert('✅ Contract signed and signature saved!');
     } catch (err) {
-      console.error('❌ Error saving signature:', err);
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
       alert(`Failed to save signature. Error: ${err.message}`);
     }
   };
@@ -269,7 +267,7 @@ export default function RentalDetails() {
         .order('created_at', { ascending: false });
 
       if (mediaError) {
-        console.error('Error loading media records:', mediaError);
+        console.error('❌ Supabase Error', { message: mediaError.message, details: mediaError.details, hint: mediaError.hint, code: mediaError.code });
         return;
       }
 
@@ -283,7 +281,7 @@ export default function RentalDetails() {
         setClosingMedia([]);
       }
     } catch (err) {
-      console.error('Error loading rental media:', err);
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
     }
   };
 
@@ -296,10 +294,7 @@ export default function RentalDetails() {
           .from('app_4c3a7a6153_rentals')
           .select(`
             *,
-            customer_id_image,
-            second_driver_customer_id,
-            vehicle:saharax_0u4w4d_vehicles(*),
-            customer:app_4c3a7a6153_customers(id, id_scan_url)
+            vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(*)
           `)
           .eq('id', id)
           .single();
@@ -330,7 +325,7 @@ export default function RentalDetails() {
         await loadRentalMedia(rentalData.id);
         
       } catch (err) {
-        console.error('❌ Error loading rental:', err);
+        console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
         setError('Failed to load rental details');
       } finally {
         setLoading(false);
@@ -347,16 +342,37 @@ export default function RentalDetails() {
       if (rental && rental.second_driver_name && !rental.second_driver_customer_id) {
         setIsFindingSecondDriver(true);
         try {
+          // Fetch main driver's license to prevent duplication
+          const { data: mainDriverData, error: mainDriverError } = await supabase
+            .from('app_4c3a7a6153_customers')
+            .select('licence_number')
+            .eq('id', rental.customer_id)
+            .single();
+
+          if (mainDriverError) {
+            console.error("Validation failed: Could not fetch main driver's license.", mainDriverError);
+          } else {
+              const mainLicence = mainDriverData.licence_number;
+              const secondLicence = rental.second_driver_license;
+              
+              console.log(`[Validation Check] Main driver license: "${mainLicence}", Second driver license: "${secondLicence}"`);
+
+              if (secondLicence && mainLicence === secondLicence) {
+                alert("Second driver licence must be different from main driver");
+                return; 
+              }
+          }
+
           let customer = null;
           // Try to find by license first
           if (rental.second_driver_license) {
             const { data: customerByLicense, error: licenseError } = await supabase
               .from('app_4c3a7a6153_customers')
               .select('id')
-              .eq('license_number', rental.second_driver_license)
+              .eq('licence_number', rental.second_driver_license)
               .single();
             if (licenseError && licenseError.code !== 'PGRST116') { // PGRST116: no rows returned
-              console.error('Error finding customer by license:', licenseError);
+              console.error('❌ Supabase Error', { message: licenseError.message, details: licenseError.details, hint: licenseError.hint, code: licenseError.code });
             }
             if (customerByLicense) {
               customer = customerByLicense;
@@ -371,7 +387,7 @@ export default function RentalDetails() {
               .eq('full_name', rental.second_driver_name)
               .single();
             if (nameError && nameError.code !== 'PGRST116') {
-              console.error('Error finding customer by name:', nameError);
+              console.error('❌ Supabase Error', { message: nameError.message, details: nameError.details, hint: nameError.hint, code: nameError.code });
             }
             if (customerByName) {
               customer = customerByName;
@@ -387,7 +403,7 @@ export default function RentalDetails() {
               .eq('id', rental.id);
           }
         } catch (err) {
-          console.error("Failed to find second driver's customer record:", err);
+          console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
         } finally {
           setIsFindingSecondDriver(false);
         }
@@ -479,7 +495,7 @@ export default function RentalDetails() {
         setCapturedFiles(prev => [...prev, fileObj]);
         setIsUploading(false);
       } catch (err) {
-        console.error('❌ Upload failed:', err);
+        console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
         alert('Upload failed. Please try again.');
         setIsUploading(false);
       }
@@ -547,7 +563,7 @@ export default function RentalDetails() {
         .from('app_4c3a7a6153_rentals')
         .update(rentalUpdate)
         .eq('id', rental.id)
-        .select('*, vehicle:saharax_0u4w4d_vehicles(*)')
+        .select('*, vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(*)')
         .single();
       
       if (rentalError) throw new Error(`Failed to update rental: ${rentalError.message}`);
@@ -562,7 +578,7 @@ export default function RentalDetails() {
       setRental(updatedRental);
 
     } catch (error) {
-      console.error(`❌ Error saving ${phase} video:`, error);
+      console.error('❌ Supabase Error', { message: error.message, details: error.details, hint: error.hint, code: error.code });
       alert(error.message || `Failed to save ${phase} video`);
     } finally {
       setIsProcessingVideo(false);
@@ -585,7 +601,7 @@ export default function RentalDetails() {
         .from('app_4c3a7a6153_rentals')
         .update({ rental_status: 'active', started_at: new Date().toISOString() })
         .eq('id', rental.id)
-        .select('*, vehicle:saharax_0u4w4d_vehicles(*)')
+        .select('*, vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(*)')
         .single();
 
       if (error) throw error;
@@ -594,7 +610,7 @@ export default function RentalDetails() {
       setRental(updatedRental);
       
     } catch (err) {
-      console.error('Error starting rental:', err);
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
       alert('Failed to start rental. Please try again.');
     }
   };
@@ -616,7 +632,7 @@ export default function RentalDetails() {
       alert('Rental completed successfully!');
       navigate('/admin/rentals');
     } catch (err) {
-      console.error('Error completing rental:', err);
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
       alert('Failed to complete rental. Please try again.');
     }
   };
@@ -634,7 +650,7 @@ export default function RentalDetails() {
         alert('Rental cancelled successfully!');
         navigate('/admin/rentals');
       } catch (err) {
-        console.error('Error cancelling rental:', err);
+        console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
         alert('Failed to cancel rental. Please try again.');
       }
     }
@@ -682,7 +698,7 @@ export default function RentalDetails() {
 
   const formattedRentalForInvoice = {
     ...rental,
-    customer_license_number: rental.linked_display_id,
+    customer_license_number: 'N/A',
     vehicle_details: rental.vehicle,
     start_date: rental.rental_start_date ? new Date(rental.rental_start_date).toLocaleString() : 'N/A',
     end_date: rental.rental_end_date ? new Date(rental.rental_end_date).toLocaleString() : 'N/A',
@@ -756,7 +772,7 @@ export default function RentalDetails() {
               <p><strong>Full Name:</strong> {rental.customer_name}</p>
               <p><strong>Email:</strong> {rental.customer_email}</p>
               <p><strong>Phone:</strong> {rental.customer_phone}</p>
-              <p><strong>ID/License:</strong> {rental.linked_display_id || 'N/A'}</p>
+              <p><strong>ID/License:</strong> {'N/A'}</p>
             </div>
           </div>
           {rental.second_driver_name && (
@@ -937,22 +953,14 @@ export default function RentalDetails() {
         <div className="flex justify-center gap-2">
           {isScheduled && (
             <>
-              <Button onClick={startRental} disabled={!canStartRental} className={`flex-1 ${!canStartRental ? 'bg-gray-300' : 'bg-green-600 hover:bg-green-700 text-white'}`}>
-                <PlayCircle className="w-4 h-4 mr-1" /> Start
-              </Button>
-              <Button onClick={cancelRental} variant="destructive" className="flex-1">
-                <XCircle className="w-4 h-4 mr-1" /> Cancel
-              </Button>
+              <Button onClick={startRental} disabled={!canStartRental} className={`flex-1 ${!canStartRental ? 'bg-gray-300' : 'bg-green-600 hover:bg-green-700 text-white'}`}>\n                <PlayCircle className="w-4 h-4 mr-1" /> Start\n              </Button>
+              <Button onClick={cancelRental} variant="destructive" className="flex-1">\n                <XCircle className="w-4 h-4 mr-1" /> Cancel\n              </Button>
             </>
           )}
           {isActive && (
             <>
-              <Button onClick={completeRental} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white">
-                <CheckCircle className="w-4 h-4 mr-1" /> Complete
-              </Button>
-              <Button onClick={cancelRental} variant="destructive" className="flex-1">
-                <XCircle className="w-4 h-4 mr-1" /> Cancel
-              </Button>
+              <Button onClick={completeRental} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white">\n                <CheckCircle className="w-4 h-4 mr-1" /> Complete\n              </Button>
+              <Button onClick={cancelRental} variant="destructive" className="flex-1">\n                <XCircle className="w-4 h-4 mr-1" /> Cancel\n              </Button>
             </>
           )}
         </div>

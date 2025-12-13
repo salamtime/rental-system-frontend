@@ -2,20 +2,23 @@
  * Morocco Timezone Utility
  * 
  * Provides centralized Morocco timezone handling for all date operations.
- * Uses "Africa/Casablanca" timezone (GMT+1 with automatic DST handling).
+ * Uses "Africa/Casablanca" timezone.
  */
 
 const MOROCCO_TIMEZONE = 'Africa/Casablanca';
 
 /**
- * Get current date in Morocco timezone
- * @returns {Date} Current date in Morocco timezone
+ * Helper to format a Date object into a 'YYYY-MM-DD' string.
+ * This function respects the local date components and does not perform timezone conversion.
+ * @param {Date} date - The date object to format.
+ * @returns {string} The formatted date string.
  */
-export const getMoroccoToday = () => {
-  const now = new Date();
-  // Convert to Morocco timezone and get the date components
-  const moroccoDate = new Date(now.toLocaleString("en-US", { timeZone: MOROCCO_TIMEZONE }));
-  return moroccoDate;
+const formatDateToYYYYMMDD = (date) => {
+  if (!date || !(date instanceof Date)) return '';
+  const year = date.getFullYear();
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+  const day = date.getDate().toString().padStart(2, '0');
+  return `${year}-${month}-${day}`;
 };
 
 /**
@@ -23,8 +26,41 @@ export const getMoroccoToday = () => {
  * @returns {string} Today's date in YYYY-MM-DD format
  */
 export const getMoroccoTodayString = () => {
-  const moroccoToday = getMoroccoToday();
-  return moroccoToday.toISOString().split('T')[0];
+  const today = new Date();
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone: MOROCCO_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  });
+  // This correctly returns 'YYYY-MM-DD' for the specified timezone.
+  return formatter.format(today);
+};
+
+/**
+ * Parses a 'YYYY-MM-DD' string into a Date object representing midnight
+ * in the user's local timezone. This is crucial for avoiding off-by-one errors
+ * with UI components like <input type="date">.
+ * @param {string} dateString - Date string in YYYY-MM-DD format.
+ * @returns {Date | null} A Date object or null if the string is invalid.
+ */
+export const parseDateAsLocal = (dateString) => {
+  if (!dateString || !/^\d{4}-\d{2}-\d{2}$/.test(dateString)) return null;
+  const [year, month, day] = dateString.split('-').map(Number);
+  // Creates a Date object for midnight in the browser's local timezone.
+  return new Date(year, month - 1, day);
+};
+
+// Alias for internal consistency.
+const parseMoroccoDate = parseDateAsLocal;
+
+/**
+ * Get current date in Morocco timezone as a local Date object.
+ * @returns {Date} Current date in Morocco timezone
+ */
+export const getMoroccoToday = () => {
+  const dateString = getMoroccoTodayString();
+  return parseMoroccoDate(dateString);
 };
 
 /**
@@ -35,7 +71,7 @@ export const getMoroccoTomorrowString = () => {
   const moroccoToday = getMoroccoToday();
   const tomorrow = new Date(moroccoToday);
   tomorrow.setDate(moroccoToday.getDate() + 1);
-  return tomorrow.toISOString().split('T')[0];
+  return formatDateToYYYYMMDD(tomorrow);
 };
 
 /**
@@ -46,24 +82,10 @@ export const getMoroccoTomorrowString = () => {
  */
 export const getMoroccoDateOffset = (daysOffset, baseDateStr = null) => {
     const baseDate = baseDateStr ? parseMoroccoDate(baseDateStr) : getMoroccoToday();
+    if (!baseDate) return '';
     const targetDate = new Date(baseDate);
     targetDate.setDate(targetDate.getDate() + daysOffset);
-    return targetDate.toISOString().split('T')[0];
-};
-
-/**
- * Convert a date string to Morocco timezone date object
- * @param {string} dateString - Date string in YYYY-MM-DD format
- * @returns {Date} Date object in Morocco timezone
- */
-export const parseMoroccoDate = (dateString) => {
-  if (!dateString) return null;
-  
-  // Parse the date string and ensure it's interpreted in Morocco timezone
-  const [year, month, day] = dateString.split('-').map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
-  
-  return date;
+    return formatDateToYYYYMMDD(targetDate);
 };
 
 /**
@@ -94,15 +116,17 @@ export const isMoroccoToday = (dateString) => {
  */
 export const getMoroccoWeekRange = () => {
   const today = getMoroccoToday();
+  if (!today) return { start: '', end: '' };
   const startOfWeek = new Date(today);
-  startOfWeek.setDate(today.getDate() - today.getDay()); // Sunday
+  // Adjust to the beginning of the week (e.g., Sunday)
+  startOfWeek.setDate(today.getDate() - today.getDay()); 
   
   const endOfWeek = new Date(startOfWeek);
-  endOfWeek.setDate(startOfWeek.getDate() + 6); // Saturday
+  endOfWeek.setDate(startOfWeek.getDate() + 6); // End of the week (e.g., Saturday)
   
   return {
-    start: startOfWeek.toISOString().split('T')[0],
-    end: endOfWeek.toISOString().split('T')[0]
+    start: formatDateToYYYYMMDD(startOfWeek),
+    end: formatDateToYYYYMMDD(endOfWeek)
   };
 };
 
@@ -111,30 +135,32 @@ export const getMoroccoWeekRange = () => {
  * @returns {object} Object with startTime and endTime in HH:MM format
  */
 export const getMoroccoHourlyTimes = () => {
-  // Get current time in Morocco timezone
   const now = new Date();
-  const moroccoTime = new Date(now.toLocaleString("en-US", { timeZone: MOROCCO_TIMEZONE }));
   
-  // Round to nearest 30-minute increment and add 30 minutes
-  const minutes = moroccoTime.getMinutes();
+  const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: MOROCCO_TIMEZONE,
+      hour: 'numeric', minute: 'numeric', hour12: false
+  }).formatToParts(now);
+  
+  let hour = parseInt(parts.find(p => p.type === 'hour').value, 10);
+  const minutes = parseInt(parts.find(p => p.type === 'minute').value, 10);
+
+  const startTime = new Date();
+  startTime.setHours(hour);
+  startTime.setMinutes(minutes);
+
   const roundedMinutes = minutes < 30 ? 30 : 0;
   const hourOffset = minutes < 30 ? 0 : 1;
   
-  // Calculate start time (current time + 30 minutes, rounded to 30-min increments)
-  const startTime = new Date(moroccoTime);
-  startTime.setHours(moroccoTime.getHours() + hourOffset);
+  startTime.setHours(startTime.getHours() + hourOffset);
   startTime.setMinutes(roundedMinutes);
   startTime.setSeconds(0);
   startTime.setMilliseconds(0);
   
-  // Calculate end time (start time + 1 hour)
   const endTime = new Date(startTime);
   endTime.setHours(startTime.getHours() + 1);
   
-  // Format times as HH:MM
-  const formatTime = (date) => {
-    return date.toTimeString().slice(0, 5); // HH:MM format
-  };
+  const formatTime = (date) => date.toTimeString().slice(0, 5);
   
   return {
     startTime: formatTime(startTime),
@@ -147,9 +173,13 @@ export const getMoroccoHourlyTimes = () => {
  * @returns {string} Current time in Morocco in HH:MM format
  */
 export const getMoroccoCurrentTime = () => {
-  const now = new Date();
-  const moroccoTime = new Date(now.toLocaleString("en-US", { timeZone: MOROCCO_TIMEZONE }));
-  return moroccoTime.toTimeString().slice(0, 5); // HH:MM format
+    const now = new Date();
+    return new Intl.DateTimeFormat('en-GB', {
+        timeZone: MOROCCO_TIMEZONE,
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+    }).format(now);
 };
 
 /**
@@ -164,3 +194,5 @@ export const isAfter = (date1, date2) => {
   }
   return date1.getTime() > date2.getTime();
 };
+
+export { formatDateToYYYYMMDD };

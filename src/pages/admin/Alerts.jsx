@@ -129,7 +129,7 @@ const Alerts = () => {
       });
       
     } catch (err) {
-      console.error('❌ Error loading alerts:', err);
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
       setError(err.message || 'Failed to load alerts');
     } finally {
       setLoading(false);
@@ -152,7 +152,7 @@ const Alerts = () => {
       console.log(`✅ Loaded ${fleetAlerts.length} fleet alerts`);
       return fleetAlerts;
     } catch (error) {
-      console.error('❌ Error loading fleet alerts:', error);
+      console.error('❌ Supabase Error', { message: error.message, details: error.details, hint: error.hint, code: error.code });
       return [];
     }
   };
@@ -208,7 +208,7 @@ const Alerts = () => {
       console.log(`✅ Loaded ${fuelAlerts.length} fuel alerts`);
       return fuelAlerts;
     } catch (error) {
-      console.error('❌ Error loading fuel alerts:', error);
+      console.error('❌ Supabase Error', { message: error.message, details: error.details, hint: error.hint, code: error.code });
       return [];
     }
   };
@@ -228,7 +228,7 @@ const Alerts = () => {
           .order('date', { ascending: true });
 
         if (error) {
-          console.error('Error loading upcoming maintenance:', error);
+          console.error('❌ Supabase Error', { message: error.message, details: error.details, hint: error.hint, code: error.code });
           return [];
         }
 
@@ -282,7 +282,7 @@ const Alerts = () => {
       console.log(`✅ Loaded ${maintenanceAlerts.length} maintenance alerts`);
       return maintenanceAlerts;
     } catch (error) {
-      console.error('❌ Error loading maintenance alerts:', error);
+      console.error('❌ Supabase Error', { message: error.message, details: error.details, hint: error.hint, code: error.code });
       return [];
     }
   };
@@ -312,7 +312,7 @@ const Alerts = () => {
           remaining_amount,
           rental_completed_at,
           vehicle_id,
-          vehicle:saharax_0u4w4d_vehicles(name, model, plate_number)
+          vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(name, model, plate_number)
         `)
         .is('rental_completed_at', null)
         .neq('rental_status', 'cancelled')
@@ -320,14 +320,14 @@ const Alerts = () => {
         .order('rental_end_date', { ascending: true });
 
       if (error) {
-        console.error('❌ Error querying rental data:', error);
+        console.error('❌ Supabase Error', { message: error.message, details: error.details, hint: error.hint, code: error.code });
         return [];
       }
 
       console.log(`📊 Found ${rentals?.length || 0} active rentals (not completed, not cancelled)`);
       
       if (rentals && rentals.length > 0) {
-        console.log('\n📋 Processing rentals for alerts:');
+        console.log('\\n📋 Processing rentals for alerts:');
         
         rentals.forEach(rental => {
           const dueDate = new Date(rental.rental_end_date);
@@ -403,7 +403,7 @@ const Alerts = () => {
       console.log(`✅ Generated ${rentalAlerts.length} rental return alerts`);
       return rentalAlerts;
     } catch (error) {
-      console.error('❌ Error loading rental return alerts:', error);
+      console.error('❌ Supabase Error', { message: error.message, details: error.details, hint: error.hint, code: error.code });
       return [];
     }
   };

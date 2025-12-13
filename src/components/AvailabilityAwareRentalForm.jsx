@@ -8,7 +8,7 @@ import EnhancedUnifiedIDScanModal from './customers/EnhancedUnifiedIDScanModal';
 import enhancedUnifiedCustomerService from '../services/EnhancedUnifiedCustomerService';
 import { supabase } from '../lib/supabase';
 import { DollarSign, Calculator, Info, AlertCircle, CheckCircle, Loader, Clock, Scan, RefreshCw, Shield, CalendarX, UserPlus } from 'lucide-react';
-import { getMoroccoTodayString, getMoroccoTomorrowString, getMoroccoDateOffset, getMoroccoHourlyTimes, isAfter } from '../utils/moroccoTime';
+import { getMoroccoTodayString, getMoroccoDateOffset, getMoroccoHourlyTimes, isAfter, parseDateAsLocal, formatDateToYYYYMMDD } from '../utils/moroccoTime';
 
 const AvailabilityAwareRentalForm = ({ 
   onSuccess, 
@@ -82,7 +82,15 @@ const AvailabilityAwareRentalForm = ({
   useEffect(() => {
     loadVehicleModels();
     loadTransportFees();
-  }, []);
+    if (mode === 'create') {
+      const today = getMoroccoTodayString();
+      setFormData(prev => ({
+        ...prev,
+        rental_start_date: prev.rental_start_date || today,
+        rental_end_date: prev.rental_end_date || today,
+      }));
+    }
+  }, [mode]);
 
   useEffect(() => {
     if (initialData && mode === 'edit') {
@@ -93,27 +101,56 @@ const AvailabilityAwareRentalForm = ({
       
       if (initialData.rental_start_at) {
         const startDate = new Date(initialData.rental_start_at);
-        startTime = startDate.toTimeString().slice(0, 5);
+        if (!isNaN(startDate.getTime())) {
+            startTime = startDate.toTimeString().slice(0, 5);
+        }
       }
       
       if (initialData.rental_end_at) {
         const endDate = new Date(initialData.rental_end_at);
-        endTime = endDate.toTimeString().slice(0, 5);
+        if (!isNaN(endDate.getTime())) {
+            endTime = endDate.toTimeString().slice(0, 5);
+        }
       }
+
+      const cleanStartDate = initialData.rental_start_date ? initialData.rental_start_date.split('T')[0] : '';
+      const cleanEndDate = initialData.rental_end_date ? initialData.rental_end_date.split('T')[0] : '';
       
       setFormData({
         ...formData,
         ...initialData,
-        rental_start_date: initialData.rental_start_date ? 
-          new Date(initialData.rental_start_date).toISOString().split('T')[0] : '',
-        rental_end_date: initialData.rental_end_date ? 
-          new Date(initialData.rental_end_date).toISOString().split('T')[0] : '',
+        rental_start_date: cleanStartDate,
+        rental_end_date: cleanEndDate,
         rental_start_time: startTime,
         rental_end_time: endTime,
         payment_status: initialData.payment_status || 'unpaid'
       });
     }
   }, [initialData, mode]);
+
+  const composeDateTime = (date, time) => {
+    const localDate = parseDateAsLocal(date);
+    if (!localDate) {
+        console.error('Composed invalid date from string:', date);
+        return null;
+    }
+
+    const timeToUse = time || '00:00';
+    const [hours, minutes] = timeToUse.split(':').map(Number);
+    
+    if (isNaN(hours) || isNaN(minutes)) {
+        console.error('Invalid time format:', timeToUse);
+        return localDate; // Return date at midnight
+    }
+
+    localDate.setHours(hours, minutes, 0, 0);
+    
+    if (isNaN(localDate.getTime())) {
+        console.error('Composed invalid date with time:', date, time);
+        return null;
+    }
+    return localDate;
+  };
 
   useEffect(() => {
     if (formData.rental_start_date && formData.rental_end_date && formData.rental_start_time && formData.rental_end_time) {
@@ -131,10 +168,9 @@ const AvailabilityAwareRentalForm = ({
           newStartDatetime.setDate(newStartDatetime.getDate() - 1);
         }
 
-        const newStartDate = newStartDatetime.toISOString().split('T')[0];
+        const newStartDate = formatDateToYYYYMMDD(newStartDatetime);
         const newStartTime = newStartDatetime.toTimeString().slice(0, 5);
 
-        // Only update if there's a change to prevent loops
         if (formData.rental_start_date !== newStartDate || formData.rental_start_time !== newStartTime) {
             setFormData(prev => ({
               ...prev,
@@ -142,7 +178,6 @@ const AvailabilityAwareRentalForm = ({
               rental_start_time: newStartTime,
             }));
             setDateError("Start time was automatically adjusted to be before the end time.");
-            // Return early to avoid running calculateQuantityAndPricing with stale data
             return; 
         }
       } else {
@@ -156,7 +191,7 @@ const AvailabilityAwareRentalForm = ({
     formData.rental_start_time,
     formData.rental_end_time,
     formData.rental_type,
-    formData.vehicle_id // Keep this for pricing
+    formData.vehicle_id
   ]);
 
   useEffect(() => {
@@ -286,19 +321,6 @@ const AvailabilityAwareRentalForm = ({
     setCanSubmit(isReady);
   };
 
-  const composeDateTime = (date, time) => {
-    if (!date) return null;
-    
-    const timeToUse = time || (date === formData.rental_start_date ? '09:00' : '17:00');
-    
-    try {
-      return new Date(`${date}T${timeToUse}:00`);
-    } catch (err) {
-      console.error('Error composing datetime:', err);
-      return null;
-    }
-  };
-
   const calculateQuantityAndPricing = () => {
     const { rental_type, rental_start_date, rental_end_date, rental_start_time, rental_end_time, vehicle_id } = formData;
 
@@ -316,7 +338,7 @@ const AvailabilityAwareRentalForm = ({
       const correctedEndDate = new Date(endDatetime);
       correctedEndDate.setDate(correctedEndDate.getDate() + 1);
       endDatetime = correctedEndDate;
-      updatedEndDate = correctedEndDate.toISOString().split('T')[0];
+      updatedEndDate = formatDateToYYYYMMDD(correctedEndDate);
       isOvernight = true;
       console.log('🕒 Overnight hourly rental detected. Corrected end date:', updatedEndDate);
     }
@@ -329,8 +351,9 @@ const AvailabilityAwareRentalForm = ({
       const diffDays = Math.max(Math.ceil((endDatetime - startDatetime) / (1000 * 60 * 60 * 24)), 1);
       quantity = Math.ceil(diffDays / 7);
     } else {
-      const startDate = new Date(rental_start_date);
-      const endDate = new Date(updatedEndDate);
+      const startDate = parseDateAsLocal(rental_start_date);
+      const endDate = parseDateAsLocal(updatedEndDate);
+      if (!startDate || !endDate) return;
       const diffDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
       quantity = Math.max(diffDays, 1);
     }
@@ -486,19 +509,21 @@ const AvailabilityAwareRentalForm = ({
       
       newFormData.rental_type = value;
 
+      let startDateToUse = newFormData.rental_start_date || todayStr;
+      if (startDateToUse && startDateToUse.includes('T')) {
+        startDateToUse = startDateToUse.split('T')[0];
+      }
+
       if (value === 'hourly') {
-        const startDateToUse = newFormData.rental_start_date || todayStr;
         newFormData.rental_start_date = startDateToUse;
         newFormData.rental_end_date = startDateToUse;
       } else if (value === 'daily') {
-        const startDateToUse = newFormData.rental_start_date || todayStr;
         const tomorrowStr = getMoroccoDateOffset(1, startDateToUse);
         newFormData.rental_start_date = startDateToUse;
         newFormData.rental_end_date = tomorrowStr;
         newFormData.rental_start_time = currentTime;
         newFormData.rental_end_time = currentTime;
       } else if (value === 'weekly') {
-        const startDateToUse = newFormData.rental_start_date || todayStr;
         const weekLaterStr = getMoroccoDateOffset(7, startDateToUse);
         newFormData.rental_start_date = startDateToUse;
         newFormData.rental_end_date = weekLaterStr;
@@ -508,15 +533,20 @@ const AvailabilityAwareRentalForm = ({
     }
 
     if (name === 'rental_start_date') {
+        let dateValue = value;
+        if (dateValue && dateValue.includes('T')) {
+            dateValue = dateValue.split('T')[0];
+        }
         if (newFormData.rental_type === 'daily') {
-            const nextDay = getMoroccoDateOffset(1, value);
+            const nextDay = getMoroccoDateOffset(1, dateValue);
             newFormData.rental_end_date = nextDay;
         } else if (newFormData.rental_type === 'weekly') {
-            const weekLater = getMoroccoDateOffset(7, value);
+            const weekLater = getMoroccoDateOffset(7, dateValue);
             newFormData.rental_end_date = weekLater;
         } else if (newFormData.rental_type === 'hourly') {
-            newFormData.rental_end_date = value;
+            newFormData.rental_end_date = dateValue;
         }
+        newFormData.rental_start_date = dateValue;
     }
 
     setFormData(newFormData);
@@ -556,9 +586,9 @@ const AvailabilityAwareRentalForm = ({
         console.error("Image upload failed:", err);
         let friendlyError = `Failed to upload image: ${err.message}.`;
         if (err.message.includes('Bucket not found')) {
-            friendlyError += "\n\nSuggestion: Please ensure a Supabase Storage bucket named 'customer-documents' exists and has the correct public access policies."
+            friendlyError += "\\n\\nSuggestion: Please ensure a Supabase Storage bucket named 'customer-documents' exists and has the correct public access policies."
         } else if (err.message.includes('400')) {
-            friendlyError += "\n\nSuggestion: The file path or type might be invalid. Please try again."
+            friendlyError += "\\n\\nSuggestion: The file path or type might be invalid. Please try again."
         }
         setError(friendlyError);
       } finally {
@@ -621,16 +651,21 @@ const AvailabilityAwareRentalForm = ({
   const handleDateChange = (field, value) => {
     console.log('📅 Date change from SmartDatePicker:', field, value, 'Rental type:', formData.rental_type);
     
+    let cleanValue = value;
+    if (value && value.includes('T')) {
+        cleanValue = value.split('T')[0];
+    }
+
     const newValues = {};
-    newValues[field === 'startDate' ? 'rental_start_date' : 'rental_end_date'] = value;
+    newValues[field === 'startDate' ? 'rental_start_date' : 'rental_end_date'] = cleanValue;
 
     if (field === 'startDate') {
       if (formData.rental_type === 'hourly') {
-        newValues.rental_end_date = value;
+        newValues.rental_end_date = cleanValue;
       } else if (formData.rental_type === 'daily') {
-        newValues.rental_end_date = getMoroccoDateOffset(1, value);
+        newValues.rental_end_date = getMoroccoDateOffset(1, cleanValue);
       } else if (formData.rental_type === 'weekly') {
-        newValues.rental_end_date = getMoroccoDateOffset(7, value);
+        newValues.rental_end_date = getMoroccoDateOffset(7, cleanValue);
       }
     }
     
@@ -652,7 +687,7 @@ const AvailabilityAwareRentalForm = ({
       if (startDatetime) {
         const endDatetime = new Date(startDatetime.getTime() + hours * 60 * 60 * 1000);
         
-        const newEndDate = endDatetime.toISOString().split('T')[0];
+        const newEndDate = formatDateToYYYYMMDD(endDatetime);
         const newEndTime = endDatetime.toTimeString().slice(0, 5);
 
         setFormData(prev => ({
@@ -697,7 +732,7 @@ const AvailabilityAwareRentalForm = ({
       
       if (customerId) {
         console.log('🔍 Fetching complete customer data from database for ID:', customerId);
-        const fetchResult = await enhancedUnifiedCustomerService.getCustomer(customerId);
+        const fetchResult = await enhancedUnifiedCustomerService.getCustomerById(customerId);
         
         if (fetchResult.success && fetchResult.data) {
           customerData = fetchResult.data;
@@ -786,9 +821,11 @@ const AvailabilityAwareRentalForm = ({
       return;
     }
     
-    if (formData.customer_email && formData.customer_email.trim()) {
+    const trimmedEmail = formData.customer_email ? formData.customer_email.trim() : '';
+
+    if (trimmedEmail) {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-      if (!emailRegex.test(formData.customer_email)) {
+      if (!emailRegex.test(trimmedEmail)) {
         console.log('❌ Invalid email format');
         setError('Please enter a valid email address or leave the email field empty.');
         return;
@@ -820,7 +857,6 @@ const AvailabilityAwareRentalForm = ({
             nationality: null,
             address: null,
             id_scan_url: formData.second_driver_id_image || null,
-            customer_id_image: formData.second_driver_id_image || null,
             created_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
         };
@@ -865,7 +901,7 @@ const AvailabilityAwareRentalForm = ({
             id: newCustomerId,
             full_name: formData.customer_name,
             phone: formData.customer_phone,
-            email: formData.customer_email || null,
+            email: trimmedEmail || null,
             licence_number: formData.customer_licence_number || null,
             id_number: formData.customer_id_number || null,
             date_of_birth: formData.customer_dob || null,
@@ -912,7 +948,7 @@ const AvailabilityAwareRentalForm = ({
         rental_start_at: composeDateTime(formData.rental_start_date, formData.rental_start_time)?.toISOString(),
         rental_end_at: composeDateTime(formData.rental_end_date, formData.rental_end_time)?.toISOString(),
 
-        customer_email: formData.customer_email || null,
+        customer_email: trimmedEmail || null,
         accessories: formData.accessories || null,
         customer_licence_number: formData.customer_licence_number || null,
         customer_id_number: formData.customer_id_number || null,
@@ -963,14 +999,14 @@ const AvailabilityAwareRentalForm = ({
       let isConflict = false;
 
       if (err.message && err.message.includes('Database insertion failed:')) {
-        const dbErrorMatch = err.message.match(/Database insertion failed: (\{.*?\})/s); 
+        const dbErrorMatch = err.message.match(/Database insertion failed: (\\{.*?\\})/s); 
         if (dbErrorMatch && dbErrorMatch[1]) {
           try {
-            const jsonString = dbErrorMatch[1].trim().replace(/^[\'"]|[\'"]$/g, '');
+            const jsonString = dbErrorMatch[1].trim().replace(/^[\\']|[\\']$/g, '');
             const dbErrorObj = JSON.parse(jsonString);
             
             if (dbErrorObj.code === '23514' && dbErrorObj.message.includes('Vehicle availability check failed')) {
-                const match = dbErrorObj.message.match(/Next available:\s*(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})/);
+                const match = dbErrorObj.message.match(/Next available:\\s*(\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2})/);
                 if (match) nextAvailableTime = match[1];
                 errorMessage = `🚫 Vehicle Conflict: ${dbErrorObj.message}`;
                 isConflict = true;
@@ -989,14 +1025,14 @@ const AvailabilityAwareRentalForm = ({
              err.message.includes('Vehicle is already booked')) {
            
            isConflict = true;
-           const match = err.message.match(/Next available:\s*(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})/);
+           const match = err.message.match(/Next available:\\s*(\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2})/);
            if (match) {
              nextAvailableTime = match[1];
            }
            errorMessage = `🚫 Vehicle Conflict: ${err.message}`;
          }
       }
-
+      
       if (isConflict) {
         setAvailabilityStatus('conflict');
         
@@ -1044,13 +1080,13 @@ const AvailabilityAwareRentalForm = ({
       
       if (typeof errorMessage === 'string') {
         if (errorMessage.includes('availability') && !errorMessage.includes('Next available')) {
-          errorMessage += '\n\nTip: Try selecting different dates or an alternative vehicle.';
+          errorMessage += '\\n\\nTip: Try selecting different dates or an alternative vehicle.';
         } else if (errorMessage.includes('constraint')) {
-          errorMessage += '\n\nTip: Please check that all dates are valid and end date is after start date.';
+          errorMessage += '\\n\\nTip: Please check that all dates are valid and end date is after start date.';
         } else if (errorMessage.includes('database') && !errorMessage.includes('insertion failed')) {
-          errorMessage += '\n\nTip: There may be a temporary connection issue. Please try again.';
+          errorMessage += '\\n\\nTip: There may be a temporary connection issue. Please try again.';
         } else if (errorMessage.includes('400')) {
-          errorMessage += '\n\nTip: Bad Request - Please check that all numeric fields (price, deposit, etc.) contain valid numbers.';
+          errorMessage += '\\n\\nTip: Bad Request - Please check that all numeric fields (price, deposit, etc.) contain valid numbers.';
         }
       }
       
@@ -1154,7 +1190,7 @@ const AvailabilityAwareRentalForm = ({
             <input
               type="time"
               name="rental_start_time"
-              value={formData.rental_start_time}
+              value={formData.rental_start_time || ""}
               onChange={handleChange}
               disabled={!formData.rental_start_date || loading}
               className="w-full px-3 py-2 pl-10 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500"
@@ -1171,7 +1207,7 @@ const AvailabilityAwareRentalForm = ({
             <input
               type="time"
               name="rental_end_time"
-              value={formData.rental_end_time}
+              value={formData.rental_end_time || ""}
               onChange={handleChange}
               disabled={!formData.rental_end_date || loading}
               className="w-full px-3 py-2 pl-10 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 disabled:bg-gray-50 disabled:text-gray-500"
@@ -1316,7 +1352,7 @@ const AvailabilityAwareRentalForm = ({
                 <input
                   type="text"
                   name="customer_name"
-                  value={formData.customer_name}
+                  value={formData.customer_name || ""}
                   onChange={handleChange}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                   required
@@ -1331,7 +1367,7 @@ const AvailabilityAwareRentalForm = ({
                 <input
                   type="email"
                   name="customer_email"
-                  value={formData.customer_email}
+                  value={formData.customer_email || ""}
                   onChange={handleChange}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                   disabled={loading}
@@ -1347,7 +1383,7 @@ const AvailabilityAwareRentalForm = ({
                 <input
                   type="tel"
                   name="customer_phone"
-                  value={formData.customer_phone}
+                  value={formData.customer_phone || ""}
                   onChange={handleChange}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                   required
@@ -1357,12 +1393,12 @@ const AvailabilityAwareRentalForm = ({
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  License Number
+                  Licence Number
                 </label>
                 <input
                   type="text"
                   name="customer_licence_number"
-                  value={formData.customer_licence_number}
+                  value={formData.customer_licence_number || ""}
                   onChange={handleChange}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 bg-gray-50"
                   disabled={loading}
@@ -1418,7 +1454,7 @@ const AvailabilityAwareRentalForm = ({
                 <input
                   type="text"
                   name="second_driver_name"
-                  value={formData.second_driver_name}
+                  value={formData.second_driver_name || ""}
                   onChange={handleChange}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
                   disabled={loading}
@@ -1427,12 +1463,12 @@ const AvailabilityAwareRentalForm = ({
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Second Driver License
+                  Second Driver Licence
                 </label>
                 <input
                   type="text"
                   name="second_driver_license"
-                  value={formData.second_driver_license}
+                  value={formData.second_driver_license || ""}
                   onChange={handleChange}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500"
                   disabled={loading}
@@ -1563,7 +1599,7 @@ const AvailabilityAwareRentalForm = ({
                 <input
                   type="number"
                   name="quantity_days"
-                  value={formData.quantity_days}
+                  value={formData.quantity_days || ""}
                   onChange={handleChange}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md bg-green-50 focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                   min="0"
@@ -1581,7 +1617,7 @@ const AvailabilityAwareRentalForm = ({
                 <input
                   type="number"
                   name="unit_price"
-                  value={formData.unit_price}
+                  value={formData.unit_price || ""}
                   onChange={handleChange}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                   min="0"
@@ -1686,7 +1722,7 @@ const AvailabilityAwareRentalForm = ({
                 <input
                   type="number"
                   name="deposit_amount"
-                  value={formData.deposit_amount}
+                  value={formData.deposit_amount || ""}
                   onChange={handleChange}
                   className={`w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500 ${
                     formData.payment_status === 'paid' 
@@ -1707,7 +1743,7 @@ const AvailabilityAwareRentalForm = ({
                 <input
                   type="number"
                   name="damage_deposit"
-                  value={formData.damage_deposit}
+                  value={formData.damage_deposit || ""}
                   onChange={handleChange}
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                   min="0"

@@ -1,12 +1,6 @@
 import { supabase } from '../lib/supabase';
 import MaintenanceService from './MaintenanceService';
 
-/**
- * MaintenanceTrackingService - Enhanced with comprehensive parts tracking
- * 
- * This service now delegates parts-related operations to MaintenanceService
- * while maintaining backward compatibility for existing functionality
- */
 class MaintenanceTrackingService {
   // Table references
   static MAINTENANCE_RECORDS_TABLE = 'app_687f658e98_maintenance';
@@ -47,9 +41,6 @@ class MaintenanceTrackingService {
     'other': 'Other'
   };
 
-  /**
-   * Get current month boundaries in Africa/Casablanca timezone
-   */
   static getCurrentMonthBoundaries() {
     const now = new Date();
     const casablancaTime = new Intl.DateTimeFormat('en-CA', {
@@ -61,10 +52,8 @@ class MaintenanceTrackingService {
 
     const [year, month] = casablancaTime.split('-');
     
-    // Start of month in Casablanca timezone
     const startOfMonth = new Date(`${year}-${month}-01T00:00:00`);
     
-    // End of month in Casablanca timezone
     const endOfMonth = new Date(parseInt(year), parseInt(month), 0, 23, 59, 59, 999);
     
     return {
@@ -77,9 +66,6 @@ class MaintenanceTrackingService {
     };
   }
 
-  /**
-   * Get current time in Africa/Casablanca timezone
-   */
   static getCurrentCasablancaTime() {
     return new Date().toLocaleString('en-CA', {
       timeZone: 'Africa/Casablanca',
@@ -93,9 +79,6 @@ class MaintenanceTrackingService {
     });
   }
 
-  /**
-   * Safely coerce total_cost to numeric
-   */
   static safeCostToNumber(cost) {
     if (cost === null || cost === undefined || cost === '') {
       return 0;
@@ -110,9 +93,6 @@ class MaintenanceTrackingService {
     return numericCost;
   }
 
-  /**
-   * Safely parse date with timezone handling
-   */
   static safeDateParse(dateString) {
     if (!dateString) return null;
     
@@ -129,131 +109,126 @@ class MaintenanceTrackingService {
     }
   }
 
-  /**
-   * Create maintenance record - ENHANCED with parts tracking
-   * Now delegates to MaintenanceService for comprehensive parts management
-   */
   static async createMaintenanceRecord(recordData) {
     try {
       console.log('💾 Creating maintenance record via enhanced service:', recordData);
-
-      // Use the new MaintenanceService for complete parts tracking
       const result = await MaintenanceService.createMaintenanceRecord(recordData);
-      
       console.log('✅ Maintenance record created with parts tracking:', result.maintenance);
-      return result.maintenance; // Return maintenance record for backward compatibility
-
+      return result.maintenance;
     } catch (err) {
-      console.error('Error in createMaintenanceRecord:', err);
+      console.error({
+        message: err?.message,
+        details: err?.details,
+        hint: err?.hint,
+        code: err?.code
+      });
       throw new Error(`Failed to create maintenance record: ${err.message}`);
     }
   }
 
-  /**
-   * Update maintenance record - ENHANCED with parts reconciliation
-   * Now delegates to MaintenanceService for comprehensive parts management
-   */
   static async updateMaintenanceRecord(recordId, updateData) {
     try {
       console.log('💾 Updating maintenance record via enhanced service:', recordId, updateData);
-
-      // Use the new MaintenanceService for complete parts tracking
       const result = await MaintenanceService.updateMaintenanceRecord(recordId, updateData);
-      
       console.log('✅ Maintenance record updated with parts tracking:', result.maintenance);
-      return result.maintenance; // Return maintenance record for backward compatibility
-
+      return result.maintenance;
     } catch (err) {
-      console.error('Error in updateMaintenanceRecord:', err);
+      console.error({
+        message: err?.message,
+        details: err?.details,
+        hint: err?.hint,
+        code: err?.code
+      });
       throw new Error(`Failed to update maintenance record: ${err.message}`);
     }
   }
 
-  /**
-   * Delete maintenance record - ENHANCED with inventory restoration
-   * Now delegates to MaintenanceService for comprehensive parts management
-   */
   static async deleteMaintenanceRecord(recordId) {
     try {
       console.log('🗑️ Deleting maintenance record via enhanced service:', recordId);
-
-      // Use the new MaintenanceService for complete parts tracking
       const result = await MaintenanceService.deleteMaintenanceRecord(recordId);
-      
       console.log('✅ Maintenance record deleted with inventory restoration');
-      return true; // Return boolean for backward compatibility
-
+      return true;
     } catch (err) {
-      console.error('Error in deleteMaintenanceRecord:', err);
+      console.error({
+        message: err?.message,
+        details: err?.details,
+        hint: err?.hint,
+        code: err?.code
+      });
       throw new Error(`Failed to delete maintenance record: ${err.message}`);
     }
   }
 
-  /**
-   * Get maintenance record by ID - ENHANCED with parts details
-   */
   static async getMaintenanceById(recordId) {
     try {
       const result = await MaintenanceService.getMaintenanceById(recordId);
       return result;
     } catch (err) {
-      console.error('Error in getMaintenanceById:', err);
+      console.error({
+        message: err?.message,
+        details: err?.details,
+        hint: err?.hint,
+        code: err?.code
+      });
       throw new Error(`Failed to get maintenance record: ${err.message}`);
     }
   }
 
-  /**
-   * Get all maintenance records - ENHANCED with optional parts
-   */
   static async getAllMaintenanceRecords(filters = {}) {
     try {
       const result = await MaintenanceService.getAllMaintenanceRecords(filters);
       return result;
     } catch (err) {
-      console.error('Error in getAllMaintenanceRecords:', err);
+      console.error({
+        message: err?.message,
+        details: err?.details,
+        hint: err?.hint,
+        code: err?.code
+      });
       return [];
     }
   }
 
-  // FIXED: Dashboard data methods with proper business logic
-
-  /**
-   * Get vehicles in maintenance - Count distinct vehicle_id with open statuses
-   */
   static async getVehiclesInMaintenance() {
     try {
       console.log('🔧 Loading vehicles in maintenance from:', this.MAINTENANCE_RECORDS_TABLE);
       
-      // Get all maintenance records with open status - NO JOINS
       const { data: maintenanceRecords, error: maintenanceError } = await supabase
         .from(this.MAINTENANCE_RECORDS_TABLE)
         .select('vehicle_id, status, maintenance_type, id')
         .in('status', ['scheduled', 'in_progress']);
 
       if (maintenanceError) {
-        console.error('Error loading maintenance records:', maintenanceError);
-        return []; // ALWAYS RETURN ARRAY
+        console.error({
+            message: maintenanceError?.message,
+            details: maintenanceError?.details,
+            hint: maintenanceError?.hint,
+            code: maintenanceError?.code
+        });
+        return [];
       }
 
-      // Get all vehicles - separate query
       const { data: vehicles, error: vehiclesError } = await supabase
         .from(this.VEHICLES_TABLE)
         .select('id, name, model, plate_number, vehicle_type, status');
 
       if (vehiclesError) {
-        console.error('Error loading vehicles:', vehiclesError);
-        return []; // ALWAYS RETURN ARRAY
+        console.error({
+            message: vehiclesError?.message,
+            details: vehiclesError?.details,
+            hint: vehiclesError?.hint,
+            code: vehiclesError?.code
+        });
+        return [];
       }
 
-      // Ensure we have arrays to work with
       const safeMaintenanceRecords = maintenanceRecords || [];
       const safeVehicles = vehicles || [];
 
-      // Combine data manually - no joins
       const vehiclesInMaintenance = [];
       const vehicleMap = new Map(safeVehicles.map(v => [v.id, v]));
       
-      // Group maintenance records by vehicle
       const maintenanceByVehicle = new Map();
       safeMaintenanceRecords.forEach(record => {
         if (!maintenanceByVehicle.has(record.vehicle_id)) {
@@ -262,28 +237,29 @@ class MaintenanceTrackingService {
         maintenanceByVehicle.get(record.vehicle_id).push(record);
       });
 
-      // Create combined data structure
       maintenanceByVehicle.forEach((records, vehicleId) => {
         const vehicle = vehicleMap.get(vehicleId);
         if (vehicle) {
           vehiclesInMaintenance.push({
             vehicle,
-            maintenance_records: records || [] // ALWAYS ARRAY
+            maintenance_records: records || []
           });
         }
       });
 
       console.log('✅ Vehicles in maintenance:', vehiclesInMaintenance.length);
-      return vehiclesInMaintenance; // ALWAYS RETURN ARRAY
+      return vehiclesInMaintenance;
     } catch (err) {
-      console.error('Error in getVehiclesInMaintenance:', err);
-      return []; // ALWAYS RETURN ARRAY ON ERROR
+      console.error({
+        message: err?.message,
+        details: err?.details,
+        hint: err?.hint,
+        code: err?.code
+      });
+      return [];
     }
   }
 
-  /**
-   * Get upcoming maintenance - FIXED with proper timezone and business rules
-   */
   static async getUpcomingMaintenance() {
     try {
       console.log('🔧 Loading upcoming maintenance from:', this.MAINTENANCE_RECORDS_TABLE);
@@ -295,11 +271,15 @@ class MaintenanceTrackingService {
         .order('service_date', { ascending: true });
 
       if (error) {
-        console.error('Error loading upcoming maintenance:', error);
-        return []; // ALWAYS RETURN ARRAY
+        console.error({
+            message: error?.message,
+            details: error?.details,
+            hint: error?.hint,
+            code: error?.code
+        });
+        return [];
       }
 
-      // Get vehicles separately
       const { data: vehicles } = await supabase
         .from(this.VEHICLES_TABLE)
         .select('id, name, plate_number');
@@ -308,12 +288,10 @@ class MaintenanceTrackingService {
       const safeVehicles = vehicles || [];
       const vehicleMap = new Map(safeVehicles.map(v => [v.id, v]));
 
-      // Get current time in Casablanca timezone
       const now = new Date();
       const casablancaNow = new Date(now.toLocaleString('en-US', { timeZone: 'Africa/Casablanca' }));
       const sevenDaysFromNow = new Date(casablancaNow.getTime() + (7 * 24 * 60 * 60 * 1000));
 
-      // Process records with proper timezone handling
       const processedRecords = safeMaintenanceRecords.map(record => {
         const vehicle = vehicleMap.get(record.vehicle_id) || { name: 'Unknown', plate_number: 'N/A' };
         const serviceDate = this.safeDateParse(record.service_date);
@@ -344,36 +322,34 @@ class MaintenanceTrackingService {
         };
       });
 
-      // Sort: OVERDUE first (oldest → newest), then DUE SOON (soonest → latest)
       const sortedRecords = processedRecords.sort((a, b) => {
         if (a.isOverdue && !b.isOverdue) return -1;
         if (!a.isOverdue && b.isOverdue) return 1;
         
         if (a.isOverdue && b.isOverdue) {
-          // Both overdue, sort oldest first
           return new Date(a.service_date) - new Date(b.service_date);
         }
         
         if (a.isDueSoon && b.isDueSoon) {
-          // Both due soon, sort soonest first
           return new Date(a.service_date) - new Date(b.service_date);
         }
         
-        // Default sort by date
         return new Date(a.service_date) - new Date(b.service_date);
       });
 
       console.log('✅ Upcoming maintenance loaded:', sortedRecords.length);
-      return sortedRecords; // ALWAYS RETURN ARRAY
+      return sortedRecords;
     } catch (err) {
-      console.error('Error in getUpcomingMaintenance:', err);
-      return []; // ALWAYS RETURN ARRAY ON ERROR
+      console.error({
+        message: err?.message,
+        details: err?.details,
+        hint: err?.hint,
+        code: err?.code
+      });
+      return [];
     }
   }
 
-  /**
-   * Get maintenance history - FIXED with proper sorting and data mapping
-   */
   static async getMaintenanceHistory(options = {}) {
     try {
       console.log('🔧 Loading maintenance history from:', this.MAINTENANCE_RECORDS_TABLE);
@@ -390,11 +366,15 @@ class MaintenanceTrackingService {
       const { data: maintenanceRecords, error } = await query;
 
       if (error) {
-        console.error('Error loading maintenance history:', error);
-        return []; // ALWAYS RETURN ARRAY
+        console.error({
+            message: error?.message,
+            details: error?.details,
+            hint: error?.hint,
+            code: error?.code
+        });
+        return [];
       }
 
-      // Get vehicles separately
       const { data: vehicles } = await supabase
         .from(this.VEHICLES_TABLE)
         .select('id, name, plate_number');
@@ -403,26 +383,27 @@ class MaintenanceTrackingService {
       const safeVehicles = vehicles || [];
       const vehicleMap = new Map(safeVehicles.map(v => [v.id, v]));
 
-      // Add vehicle data and proper field mapping
       const historyWithVehicles = safeMaintenanceRecords.map(record => ({
         ...record,
         vehicle: vehicleMap.get(record.vehicle_id) || { name: 'Unknown', plate_number: 'N/A' },
-        scheduled_date: record.service_date, // Map for compatibility
-        total_cost_mad: this.safeCostToNumber(record.cost), // Safe cost conversion
+        scheduled_date: record.service_date,
+        total_cost_mad: this.safeCostToNumber(record.cost),
         maintenance_type: this.TYPE_MAPPING[record.maintenance_type] || record.maintenance_type || 'Unknown Type'
       }));
 
       console.log('✅ Maintenance history loaded:', historyWithVehicles.length);
-      return historyWithVehicles; // ALWAYS RETURN ARRAY
+      return historyWithVehicles;
     } catch (err) {
-      console.error('Error in getMaintenanceHistory:', err);
-      return []; // ALWAYS RETURN ARRAY ON ERROR
+      console.error({
+        message: err?.message,
+        details: err?.details,
+        hint: err?.hint,
+        code: err?.code
+      });
+      return [];
     }
   }
 
-  /**
-   * Get maintenance pricing catalog - ALWAYS RETURN ARRAY
-   */
   static async getMaintenancePricingCatalog() {
     try {
       console.log('💰 Loading maintenance pricing catalog from:', this.PRICING_CATALOG_TABLE);
@@ -433,22 +414,29 @@ class MaintenanceTrackingService {
         .order('part_name');
 
       if (error) {
-        console.error('Error loading maintenance pricing catalog:', error);
-        return []; // ALWAYS RETURN ARRAY
+        console.error({
+            message: error?.message,
+            details: error?.details,
+            hint: error?.hint,
+            code: error?.code
+        });
+        return [];
       }
 
       const safeCatalog = data || [];
       console.log('✅ Maintenance pricing catalog loaded:', safeCatalog.length, 'items');
-      return safeCatalog; // ALWAYS RETURN ARRAY
+      return safeCatalog;
     } catch (err) {
-      console.error('Error in getMaintenancePricingCatalog:', err);
-      return []; // ALWAYS RETURN ARRAY ON ERROR
+      console.error({
+        message: err?.message,
+        details: err?.details,
+        hint: err?.hint,
+        code: err?.code
+      });
+      return [];
     }
   }
 
-  /**
-   * Get all vehicles - ALWAYS RETURN ARRAY
-   */
   static async getAllVehicles() {
     try {
       console.log('🚗 Loading vehicles from:', this.VEHICLES_TABLE);
@@ -459,60 +447,66 @@ class MaintenanceTrackingService {
         .order('name');
 
       if (error) {
-        console.error('Error loading vehicles:', error);
-        return []; // ALWAYS RETURN ARRAY
+        console.error({
+            message: error?.message,
+            details: error?.details,
+            hint: error?.hint,
+            code: error?.code
+        });
+        return [];
       }
 
       console.log('✅ Vehicles loaded:', (data || []).length);
-      return data || []; // ALWAYS RETURN ARRAY
+      return data || [];
     } catch (err) {
-      console.error('Error in getAllVehicles:', err);
-      return []; // ALWAYS RETURN ARRAY ON ERROR
+      console.error({
+        message: err?.message,
+        details: err?.details,
+        hint: err?.hint,
+        code: err?.code
+      });
+      return [];
     }
   }
 
-  /**
-   * FIXED: Get maintenance statistics with proper business rules
-   */
   static async getMaintenanceStatistics() {
     try {
       console.log('🔧 Loading maintenance statistics from:', this.MAINTENANCE_RECORDS_TABLE);
       
-      // Get current month boundaries in Casablanca timezone
       const monthBoundaries = this.getCurrentMonthBoundaries();
       console.log('📅 Current month boundaries (Casablanca):', monthBoundaries);
 
-      // Get all maintenance records for analysis
       const { data: allRecords, error: allRecordsError } = await supabase
         .from(this.MAINTENANCE_RECORDS_TABLE)
         .select('id, vehicle_id, status, service_date, cost, maintenance_type');
 
       if (allRecordsError) {
-        console.error('Error loading maintenance records:', allRecordsError);
+        console.error({
+            message: allRecordsError?.message,
+            details: allRecordsError?.details,
+            hint: allRecordsError?.hint,
+            code: allRecordsError?.code
+        });
         throw allRecordsError;
       }
 
       const safeAllRecords = allRecords || [];
       console.log('📊 Total maintenance records:', safeAllRecords.length);
 
-      // 1. MONTHLY COST CALCULATION
       const includeScheduled = this.SYSTEM_SETTINGS.include_scheduled_in_monthly_cost;
       const validStatusesForCost = includeScheduled 
         ? ['scheduled', 'in_progress', 'completed']
         : ['in_progress', 'completed'];
 
       const monthlyRecords = safeAllRecords.filter(record => {
-        // Check if record is in current month
         const recordDate = this.safeDateParse(record.service_date);
         if (!recordDate) return false;
 
         const recordDateStr = recordDate.toISOString();
         const inCurrentMonth = recordDateStr >= monthBoundaries.start && recordDateStr <= monthBoundaries.end;
         
-        // Check if status is valid for cost calculation
         const validStatus = validStatusesForCost.includes(record.status);
         
-        // Exclude canceled/deleted if they exist
         const notExcluded = !['canceled', 'deleted'].includes(record.status);
         
         return inCurrentMonth && validStatus && notExcluded;
@@ -529,7 +523,6 @@ class MaintenanceTrackingService {
         validStatuses: validStatusesForCost
       });
 
-      // 2. VEHICLES IN MAINTENANCE COUNT
       const openRecords = safeAllRecords.filter(record => 
         ['scheduled', 'in_progress'].includes(record.status)
       );
@@ -538,7 +531,6 @@ class MaintenanceTrackingService {
         openRecords.map(record => record.vehicle_id)
       ).size;
 
-      // 3. OVERDUE AND DUE SOON COUNTS
       const casablancaNow = new Date(new Date().toLocaleString('en-US', { timeZone: 'Africa/Casablanca' }));
       const sevenDaysFromNow = new Date(casablancaNow.getTime() + (7 * 24 * 60 * 60 * 1000));
 
@@ -558,7 +550,6 @@ class MaintenanceTrackingService {
         }
       });
 
-      // 4. GENERAL STATISTICS
       const completedRecords = safeAllRecords.filter(record => record.status === 'completed');
       const totalCompletedCost = completedRecords.reduce((sum, record) => {
         return sum + this.safeCostToNumber(record.cost);
@@ -568,7 +559,6 @@ class MaintenanceTrackingService {
         ? totalCompletedCost / completedRecords.length 
         : 0;
 
-      // 5. MAINTENANCE BY TYPE
       const maintenanceByType = {};
       safeAllRecords.forEach(record => {
         const type = this.TYPE_MAPPING[record.maintenance_type] || record.maintenance_type || 'Other';
@@ -583,7 +573,6 @@ class MaintenanceTrackingService {
         avgCostPerMaintenance: avgCostPerMaintenance,
         maintenanceByType: maintenanceByType,
         vehiclesInMaintenance: uniqueVehiclesInMaintenance,
-        // Additional metrics for dashboard
         overdueCount: overdueCount,
         dueSoonCount: dueSoonCount,
         monthName: monthBoundaries.monthName,
@@ -599,10 +588,14 @@ class MaintenanceTrackingService {
         dueSoonCount: statistics.dueSoonCount
       });
 
-      return statistics; // ALWAYS RETURN OBJECT
+      return statistics;
     } catch (err) {
-      console.error('Error in getMaintenanceStatistics:', err);
-      // ALWAYS RETURN DEFAULT OBJECT ON ERROR
+      console.error({
+        message: err?.message,
+        details: err?.details,
+        hint: err?.hint,
+        code: err?.code
+      });
       return {
         totalRecords: 0,
         openRecords: 0,
@@ -619,7 +612,6 @@ class MaintenanceTrackingService {
     }
   }
 
-  // Utility methods
   static formatCurrency(amount) {
     const safeAmount = this.safeCostToNumber(amount);
     return `MAD ${safeAmount.toFixed(2)}`;
@@ -659,9 +651,6 @@ class MaintenanceTrackingService {
     }
   }
 
-  /**
-   * Update system setting for monthly cost calculation
-   */
   static updateSystemSetting(key, value) {
     if (key === 'include_scheduled_in_monthly_cost') {
       this.SYSTEM_SETTINGS.include_scheduled_in_monthly_cost = Boolean(value);
@@ -669,9 +658,6 @@ class MaintenanceTrackingService {
     }
   }
 
-  /**
-   * Get system setting
-   */
   static getSystemSetting(key) {
     return this.SYSTEM_SETTINGS[key];
   }

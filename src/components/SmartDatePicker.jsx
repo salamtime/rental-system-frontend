@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Calendar, AlertTriangle, CheckCircle, Clock, RefreshCw } from 'lucide-react';
 import VehicleService from '../services/VehicleService';
-import { getMoroccoTodayString, getMoroccoNextDays, isMoroccoToday } from '../utils/moroccoTime';
+import { getMoroccoTodayString, getMoroccoNextDays, isMoroccoToday, parseDateAsLocal, formatDateToYYYYMMDD } from '../utils/moroccoTime';
 
 /**
  * SmartDatePicker - Intelligent date selection with conflict detection
@@ -134,16 +134,18 @@ const SmartDatePicker = ({
 
       if (rentalType === 'hourly') {
         suggestedEndDate = availableDate; // Same day for hourly
-      } else if (rentalType === 'weekly') {
-        // Add 7 days for weekly
-        const endDate = new Date(availableDate + 'T00:00:00');
-        endDate.setDate(endDate.getDate() + 7);
-        suggestedEndDate = endDate.toISOString().split('T')[0];
       } else {
-        // Add 1 day for daily
-        const endDate = new Date(availableDate + 'T00:00:00');
-        endDate.setDate(endDate.getDate() + 1);
-        suggestedEndDate = endDate.toISOString().split('T')[0];
+        const endDateObj = parseDateAsLocal(availableDate);
+        if (endDateObj) {
+          if (rentalType === 'weekly') {
+            endDateObj.setDate(endDateObj.getDate() + 7);
+          } else { // daily
+            endDateObj.setDate(endDateObj.getDate() + 1);
+          }
+          suggestedEndDate = formatDateToYYYYMMDD(endDateObj);
+        } else {
+          suggestedEndDate = availableDate; // Fallback
+        }
       }
 
       suggestions.push({
@@ -172,7 +174,8 @@ const SmartDatePicker = ({
     if (!dateStr) return '';
     
     try {
-      const date = new Date(dateStr + 'T00:00:00');
+      const date = parseDateAsLocal(dateStr);
+      if (!date) return dateStr;
       return date.toLocaleDateString('en-GB', {
         day: '2-digit',
         month: '2-digit',
@@ -234,8 +237,9 @@ const SmartDatePicker = ({
         {next7Days.map((dateStr, index) => {
           const status = getDateStatus(dateStr);
           const isToday = isMoroccoToday(dateStr);
-          const dayName = new Date(dateStr + 'T00:00:00').toLocaleDateString('en', { weekday: 'short' });
-          const dayNumber = new Date(dateStr + 'T00:00:00').getDate();
+          const date = parseDateAsLocal(dateStr);
+          const dayName = date ? date.toLocaleDateString('en', { weekday: 'short' }) : '';
+          const dayNumber = date ? date.getDate() : '';
           
           return (
             <div
@@ -277,7 +281,7 @@ const SmartDatePicker = ({
           </label>
           <input
             type="date"
-            value={startDate}
+            value={startDate || ''}
             onChange={(e) => handleDateInputChange('startDate', e.target.value)}
             min={getMoroccoTodayString()}
             disabled={disabled}
@@ -293,7 +297,7 @@ const SmartDatePicker = ({
           </label>
           <input
             type="date"
-            value={endDate}
+            value={endDate || ''}
             onChange={(e) => handleDateInputChange('endDate', e.target.value)}
             min={startDate || getMoroccoTodayString()}
             disabled={disabled || (rentalType === 'hourly')}

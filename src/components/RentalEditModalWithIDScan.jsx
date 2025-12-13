@@ -84,14 +84,14 @@ const RentalEditModalWithIDScan = ({ rental, isOpen, onClose, onSuccess }) => {
           .order('name');
 
         if (error) {
-          console.error('Error fetching vehicles:', error);
+          console.error('❌ Supabase Error', { message: error.message, details: error.details, hint: error.hint, code: error.code });
           return;
         }
 
         console.log('✅ Vehicles fetched:', data?.length || 0, data);
         setVehicles(data || []);
       } catch (err) {
-        console.error('Unexpected error fetching vehicles:', err);
+        console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
       }
     };
 
@@ -238,20 +238,8 @@ const RentalEditModalWithIDScan = ({ rental, isOpen, onClose, onSuccess }) => {
         .update(updateData)
         .eq('id', rental.id);
 
-      // Try fallback table if primary fails
-      if (updateError && updateError.code === '42P01') {
-        console.log('🔄 Trying fallback table for update: saharax_0u4w4d_rentals');
-        
-        const fallbackResult = await supabase
-          .from('saharax_0u4w4d_rentals')
-          .update(updateData)
-          .eq('id', rental.id);
-
-        updateError = fallbackResult.error;
-      }
-
       if (updateError) {
-        console.error('❌ Error updating rental:', updateError);
+        console.error('❌ Supabase Error', { message: updateError.message, details: updateError.details, hint: updateError.hint, code: updateError.code });
         throw updateError;
       }
 
@@ -262,7 +250,7 @@ const RentalEditModalWithIDScan = ({ rental, isOpen, onClose, onSuccess }) => {
         .from('app_4c3a7a6153_rentals')
         .select(`
           *,
-          vehicle:saharax_0u4w4d_vehicles!inner(
+          vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(
             id,
             name,
             model,
@@ -273,31 +261,8 @@ const RentalEditModalWithIDScan = ({ rental, isOpen, onClose, onSuccess }) => {
         .eq('id', rental.id)
         .single();
 
-      // Try fallback table for fetch if primary fails
-      if (fetchError && fetchError.code === '42P01') {
-        console.log('🔄 Trying fallback table for fetch: saharax_0u4w4d_rentals');
-        
-        const fallbackFetchResult = await supabase
-          .from('saharax_0u4w4d_rentals')
-          .select(`
-            *,
-            vehicle:saharax_0u4w4d_vehicles!inner(
-              id,
-              name,
-              model,
-              plate_number,
-              status
-            )
-          `)
-          .eq('id', rental.id)
-          .single();
-
-        updatedRental = fallbackFetchResult.data;
-        fetchError = fallbackFetchResult.error;
-      }
-
       if (fetchError) {
-        console.error('⚠️ Error fetching updated rental:', fetchError);
+        console.error('❌ Supabase Error', { message: fetchError.message, details: fetchError.details, hint: fetchError.hint, code: fetchError.code });
         updatedRental = { ...rental, ...updateData };
       }
 
@@ -312,7 +277,7 @@ const RentalEditModalWithIDScan = ({ rental, isOpen, onClose, onSuccess }) => {
       onClose();
 
     } catch (err) {
-      console.error('❌ Error in handleSubmit:', err);
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
       toast.error(`Failed to update rental: ${err.message}`);
     } finally {
       setLoading(false);
@@ -578,7 +543,7 @@ const RentalEditModalWithIDScan = ({ rental, isOpen, onClose, onSuccess }) => {
                     <SelectContent className="bg-white border border-gray-300 shadow-lg">
                       <SelectItem value="unpaid" className="bg-white hover:bg-gray-100">Unpaid</SelectItem>
                       <SelectItem value="partial" className="bg-white hover:bg-gray-100">Partial</SelectItem>
-                      <SelectItem value="paid_in_full" className="bg-white hover:bg-gray-100">Paid in Full</SelectItem>
+                      <SelectItem value="paid" className="bg-white hover:bg-gray-100">Paid</SelectItem>
                       <SelectItem value="refunded" className="bg-white hover:bg-gray-100">Refunded</SelectItem>
                     </SelectContent>
                   </Select>

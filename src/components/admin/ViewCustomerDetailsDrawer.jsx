@@ -23,18 +23,27 @@ const ViewCustomerDetailsDrawer = ({
   const [creatingProfile, setCreatingProfile] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState(null);
+  const [alertMessage, setAlertMessage] = useState(null);
   const fileInputRef = useRef(null);
 
-  // Load customer data when drawer opens
+  // DECOUPLED LOADING - STEP 1: Load primary customer data first.
   useEffect(() => {
     if (isOpen && (rental || customerId)) {
       loadCustomerData();
     }
   }, [isOpen, rental, customerId]);
 
+  // DECOUPLED LOADING - STEP 2: Load secondary rental history after customer data is available.
+  useEffect(() => {
+    if (customerData && customerData.id) {
+      loadRentalHistory(customerData.id);
+    }
+  }, [customerData]);
+
   const loadCustomerData = async () => {
     setLoading(true);
     setError(null);
+    setAlertMessage(null);
     setCustomerData(null);
     setRentalHistory([]);
 
@@ -54,17 +63,17 @@ const ViewCustomerDetailsDrawer = ({
         } else {
           setError('No customer data available to display.');
         }
+        setLoading(false);
         return;
       }
 
-      const [customerResult, rentalHistoryResult] = await Promise.all([
-        supabase.from('app_4c3a7a6153_customers').select('*').eq('id', targetCustomerId).single(),
-        CustomerService.getCustomerRentalHistory(targetCustomerId)
-      ]);
+      const { data: customer, error: customerError } = await supabase
+        .from('app_4c3a7a6153_customers')
+        .select('*')
+        .eq('id', targetCustomerId)
+        .single();
 
-      const { data: customer, error: customerError } = customerResult;
-
-      if (customerError && customerError.code !== 'PGRST116') { // Ignore "single row not found"
+      if (customerError && customerError.code !== 'PGRST116') {
         throw customerError;
       }
 
@@ -84,42 +93,42 @@ const ViewCustomerDetailsDrawer = ({
         };
       } else {
         setError(`Customer with ID ${targetCustomerId} not found.`);
+        setLoading(false);
         return;
       }
       
-      if (rentalHistoryResult.success) {
-        setRentalHistory(rentalHistoryResult.data);
-      }
-
-      // Augment with images from rental history if they are missing on the primary record.
-      if (!dataToShow.customer_id_image || !dataToShow.id_scan_url) {
-        const { data: rentals, error: rentalsError } = await supabase
-          .from('app_4c3a7a6153_rentals')
-          .select('customer_id_image, id_scan_url, created_at')
-          .eq('customer_id', targetCustomerId)
-          .order('created_at', { ascending: false });
-
-        if (rentalsError) {
-          console.warn("Could not fetch rental history for images:", rentalsError);
-        } else if (rentals) {
-          if (!dataToShow.id_scan_url) {
-            const rentalWithIdScan = rentals.find(r => r.id_scan_url);
-            if (rentalWithIdScan) dataToShow.id_scan_url = rentalWithIdScan.id_scan_url;
-          }
-          if (!dataToShow.customer_id_image) {
-            const rentalWithCustomerIdImage = rentals.find(r => r.customer_id_image);
-            if (rentalWithCustomerIdImage) dataToShow.customer_id_image = rentalWithCustomerIdImage.customer_id_image;
-          }
-        }
-      }
-
       setCustomerData(dataToShow);
 
     } catch (err) {
-      console.error('❌ Error loading customer data:', err);
+      console.error('❌ Error loading primary customer data:', err);
       setError(`Failed to load customer data: ${err.message}`);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // ROBUST & DECOUPLED RENTAL HISTORY FETCH
+  const loadRentalHistory = async (customerIdToFetch) => {
+    // DEFENSIVE UI: Check if the service and method exist before calling.
+    if (CustomerService && typeof CustomerService.getCustomerRentalHistory === 'function') {
+      try {
+        const rentalHistoryResult = await CustomerService.getCustomerRentalHistory(customerIdToFetch);
+        
+        if (rentalHistoryResult.success) {
+          setRentalHistory(rentalHistoryResult.data);
+        } else {
+          // SILENT FAILURE: Log error but don't crash UI.
+          console.warn('Could not fetch rental history:', rentalHistoryResult.error);
+          setRentalHistory([]); // Default to empty list on failure.
+        }
+      } catch (err) {
+        // SILENT FAILURE: Catch any unexpected errors during the fetch.
+        console.error('❌ Unexpected error in loadRentalHistory:', err);
+        setRentalHistory([]); // Default to empty list.
+      }
+    } else {
+      console.error("CustomerService.getCustomerRentalHistory is not available.");
+      setRentalHistory([]); // Default to empty list if method is missing.
     }
   };
   
@@ -178,23 +187,34 @@ const ViewCustomerDetailsDrawer = ({
     if (!rental || !rental.id) return;
 
     setCreatingProfile(true);
+    setError(null);
+    setAlertMessage(null);
+
     try {
-      const customerData = {
+      // Data from the rental record is used to create/find the customer.
+      const customerToSave = {
         full_name: rental.customer_name,
         email: rental.customer_email || rental.email,
-        phone: rental.customer_phone || rental.phone
+        phone: rental.customer_phone || rental.phone,
+        licence_number: rental.licence_number || rental.customer_licence_number || null,
+        id_number: rental.id_number || rental.customer_id_number || null,
       };
 
-      const result = await CustomerService.processOCRData(customerData);
+      const result = await CustomerService.saveCustomer(customerToSave);
       
       if (result.success) {
+        if (result.isExisting) {
+          setAlertMessage(result.message);
+        } else {
+          setAlertMessage('Successfully created a new customer profile.');
+        }
         await loadCustomerData();
       } else {
-        setError('Failed to create customer profile');
+        setError(result.error || 'Failed to create or update customer profile.');
       }
     } catch (err) {
       console.error('❌ Error creating customer profile:', err);
-      setError('Failed to create customer profile');
+      setError(`An unexpected error occurred: ${err.message}`);
     } finally {
       setCreatingProfile(false);
     }
@@ -262,7 +282,17 @@ const ViewCustomerDetailsDrawer = ({
             </div>
           )}
 
-          {error && !customerData && (
+          {alertMessage && (
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+              <div className="flex items-center">
+                <CheckCircle className="h-5 w-5 text-blue-400" />
+                <span className="ml-2 text-blue-800 font-medium">Notification</span>
+              </div>
+              <p className="text-blue-700 mt-1">{alertMessage}</p>
+            </div>
+          )}
+
+          {error && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-4">
               <div className="flex items-center">
                 <AlertCircle className="h-5 w-5 text-red-400" />

@@ -1,23 +1,18 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
-import { supabase } from '../../utils/supabaseClient';
 
 // Async thunks
 export const fetchRevenueData = createAsyncThunk(
   'dashboard/fetchRevenueData',
   async () => {
-    try {
-      // Mock data for now - replace with actual Supabase query when tables are ready
-      return [
-        { month: 'Jan', revenue: 1000 },
-        { month: 'Feb', revenue: 1500 },
-        { month: 'Mar', revenue: 1200 },
-        { month: 'Apr', revenue: 1800 },
-        { month: 'May', revenue: 2000 },
-        { month: 'Jun', revenue: 1700 },
-      ];
-    } catch (error) {
-      throw error;
-    }
+    // Mock data for now - replace with actual Supabase query when tables are ready
+    return [
+      { month: 'Jan', revenue: 1000 },
+      { month: 'Feb', revenue: 1500 },
+      { month: 'Mar', revenue: 1200 },
+      { month: 'Apr', revenue: 1800 },
+      { month: 'May', revenue: 2000 },
+      { month: 'Jun', revenue: 1700 },
+    ];
   }
 );
 

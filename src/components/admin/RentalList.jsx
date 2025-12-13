@@ -17,7 +17,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { MoreHorizontal } from "lucide-react";
-import { supabase } from "../../utils/supabaseClient";
+import { supabase } from "../../lib/supabase";
 
 // Helper function to format rental periods
 const formatRentalPeriod = (rental) => {
@@ -69,7 +69,7 @@ export default function RentalList() {
             total_amount: total_cost,
             rental_status: status,
             payment_status,
-            vehicle:saharax_0u4w4d_vehicles(id, name, plate_number)
+            vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(id, name, plate_number)
           `)
           .order("created_at", { ascending: false });
 
@@ -77,7 +77,7 @@ export default function RentalList() {
         setRentals(data || []);
       } catch (err) {
         setError(err.message);
-        console.error("Error fetching rentals:", err);
+        console.error("❌ Supabase Error", { message: err.message, details: err.details, hint: err.hint, code: err.code });
       } finally {
         setLoading(false);
       }

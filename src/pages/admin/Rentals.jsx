@@ -42,12 +42,13 @@ const Rentals = () => {
         .select(`
           *,
           payment_status,
-          vehicle:saharax_0u4w4d_vehicles(
+          vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(
             id,
             name,
             model,
             plate_number,
-            status
+            status,
+            vehicle_type
           )
         `);
 
@@ -63,7 +64,7 @@ const Rentals = () => {
       let { data, error } = await query;
 
       if (error) {
-        console.error('Error fetching rentals:', error);
+        console.error('❌ Supabase Error', { message: error.message, details: error.details, hint: error.hint, code: error.code });
         throw error;
       }
 
@@ -100,7 +101,7 @@ const Rentals = () => {
 
       setRentals(correctedData || []);
     } catch (err) {
-      console.error('Error in fetchRentals:', err);
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
       setError(err.message);
     }
   };
@@ -115,14 +116,14 @@ const Rentals = () => {
         .order('name', { ascending: true });
 
       if (error) {
-        console.error('Error fetching vehicles:', error);
+        console.error('❌ Supabase Error', { message: error.message, details: error.details, hint: error.hint, code: error.code });
         throw error;
       }
 
       console.log('Vehicles fetched successfully:', data?.length || 0);
       setVehicles(data || []);
     } catch (err) {
-      console.error('Error in fetchVehicles:', err);
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
       setError(err.message);
     }
   };
@@ -135,7 +136,7 @@ const Rentals = () => {
       console.log('Availability data fetched:', availability?.length || 0);
       setAvailabilityData(availability || []);
     } catch (err) {
-      console.error('Error fetching availability:', err);
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
     }
   };
 
@@ -149,13 +150,13 @@ const Rentals = () => {
         .ilike('file_type', 'video%');
 
       if (error) {
-        console.error('Error checking closing video:', error);
+        console.error('❌ Supabase Error', { message: error.message, details: error.details, hint: error.hint, code: error.code });
         return false;
       }
 
       return mediaRecords && mediaRecords.length > 0;
     } catch (err) {
-      console.error('Error in checkClosingVideo:', err);
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
       return false;
     }
   };
@@ -248,7 +249,7 @@ const Rentals = () => {
         .eq('id', rentalId);
 
       if (error) {
-        console.error('Error deleting rental:', error);
+        console.error('❌ Supabase Error', { message: error.message, details: error.details, hint: error.hint, code: error.code });
         throw error;
       }
 
@@ -256,7 +257,7 @@ const Rentals = () => {
       fetchRentals(statusFilter, paymentStatusFilter);
       fetchAvailabilityData();
     } catch (err) {
-      console.error('Error in handleDeleteRental:', err);
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
       setError(err.message);
     }
   };
@@ -325,7 +326,7 @@ const Rentals = () => {
         .single();
 
       if (error) {
-        console.error('Error completing rental:', error);
+        console.error('❌ Supabase Error', { message: error.message, details: error.details, hint: error.hint, code: error.code });
         throw error;
       }
 
@@ -336,7 +337,7 @@ const Rentals = () => {
       fetchRentals(statusFilter, paymentStatusFilter);
       fetchAvailabilityData();
     } catch (err) {
-      console.error('Error in handleCloseContract:', err);
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
       alert('❌ Failed to complete rental: ' + err.message);
     }
   };

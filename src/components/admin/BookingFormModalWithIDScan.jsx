@@ -60,35 +60,31 @@ const BookingFormModalWithIDScan = ({ isOpen, onClose, onSubmit, editingRental =
   const loadVehicles = async () => {
     setLoadingVehicles(true);
     try {
-      // Try main table first
-      let { data: vehicleData, error } = await supabase
-        .from('app_4c3a7a6153_vehicles')
+      const { data: vehicleData, error } = await supabase
+        .from('saharax_0u4w4d_vehicles')
         .select('*')
         .eq('is_available', true)
         .order('make', { ascending: true });
 
-      // If main table fails, try fallback table
-      if (error && error.code === '42P01') {
-        console.log('🔄 Trying fallback vehicles table');
-        const fallbackResult = await supabase
-          .from('saharax_0u4w4d_vehicles')
-          .select('*')
-          .eq('is_available', true)
-          .order('make', { ascending: true });
-        
-        vehicleData = fallbackResult.data;
-        error = fallbackResult.error;
-      }
-
       if (error) {
-        console.error('❌ Error loading vehicles:', error);
+        console.error({
+          message: error?.message,
+          details: error?.details,
+          hint: error?.hint,
+          code: error?.code
+        });
         setError('Failed to load vehicles');
       } else {
         setVehicles(vehicleData || []);
         console.log(`✅ Loaded ${vehicleData?.length || 0} available vehicles`);
       }
     } catch (err) {
-      console.error('❌ Error in loadVehicles:', err);
+      console.error({
+        message: err?.message,
+        details: err?.details,
+        hint: err?.hint,
+        code: err?.code
+      });
       setError('Failed to load vehicles');
     } finally {
       setLoadingVehicles(false);
@@ -152,7 +148,12 @@ const BookingFormModalWithIDScan = ({ isOpen, onClose, onSubmit, editingRental =
       console.log('✅ OCR processing completed successfully');
 
     } catch (error) {
-      console.error('❌ OCR processing failed:', error);
+      console.error({
+        message: error?.message,
+        details: error?.details,
+        hint: error?.hint,
+        code: error?.code
+      });
       setOcrError(error.message || 'Failed to process ID document');
     } finally {
       setIsProcessingOCR(false);
@@ -231,7 +232,12 @@ const BookingFormModalWithIDScan = ({ isOpen, onClose, onSubmit, editingRental =
       onClose();
 
     } catch (error) {
-      console.error('❌ Error submitting rental:', error);
+      console.error({
+        message: error?.message,
+        details: error?.details,
+        hint: error?.hint,
+        code: error?.code
+      });
       setError(error.message || 'Failed to submit rental');
     } finally {
       setIsSubmitting(false);

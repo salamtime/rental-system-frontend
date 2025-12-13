@@ -21,7 +21,7 @@ const debugAndSetupRentals = async () => {
       .limit(1);
     
     if (tableError) {
-      console.error('❌ Rentals table error:', tableError);
+      console.error('❌ Supabase Error', { message: tableError.message, details: tableError.details, hint: tableError.hint, code: tableError.code });
       
       // Try to create the table if it doesn't exist
       console.log('🛠️ Creating rentals table...');
@@ -55,7 +55,7 @@ const debugAndSetupRentals = async () => {
       
       const { error: createError } = await supabase.rpc('exec_sql', { sql: createTableSQL });
       if (createError) {
-        console.error('❌ Error creating table:', createError);
+        console.error('❌ Supabase Error', { message: createError.message, details: createError.details, hint: createError.hint, code: createError.code });
       } else {
         console.log('✅ Rentals table created successfully');
       }
@@ -71,7 +71,7 @@ const debugAndSetupRentals = async () => {
       .limit(3);
     
     if (vehicleError) {
-      console.error('❌ Vehicles table error:', vehicleError);
+      console.error('❌ Supabase Error', { message: vehicleError.message, details: vehicleError.details, hint: vehicleError.hint, code: vehicleError.code });
       
       // Create basic vehicles for testing
       console.log('🛠️ Creating vehicles table...');
@@ -101,7 +101,7 @@ const debugAndSetupRentals = async () => {
       
       const { error: createVehicleError } = await supabase.rpc('exec_sql', { sql: createVehiclesSQL });
       if (createVehicleError) {
-        console.error('❌ Error creating vehicles table:', createVehicleError);
+        console.error('❌ Supabase Error', { message: createVehicleError.message, details: createVehicleError.details, hint: createVehicleError.hint, code: createVehicleError.code });
       } else {
         console.log('✅ Vehicles table created successfully');
       }
@@ -164,7 +164,7 @@ const debugAndSetupRentals = async () => {
       .select();
     
     if (insertError) {
-      console.error('❌ Error creating test rentals:', insertError);
+      console.error('❌ Supabase Error', { message: insertError.message, details: insertError.details, hint: insertError.hint, code: insertError.code });
     } else {
       console.log('✅ Created test rentals:', insertedRentals);
     }
@@ -183,13 +183,13 @@ const debugAndSetupRentals = async () => {
         expected_total,
         returned_at,
         vehicle_id,
-        vehicle:saharax_0u4w4d_vehicles(name, model, plate_number)
+        vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(name, model, plate_number)
       `)
       .is('returned_at', null)
       .neq('rental_status', 'cancelled');
     
     if (verifyError) {
-      console.error('❌ Error verifying rentals:', verifyError);
+      console.error('❌ Supabase Error', { message: verifyError.message, details: verifyError.details, hint: verifyError.hint, code: verifyError.code });
     } else {
       console.log('✅ Verified rental data:', verifyRentals);
       
@@ -204,7 +204,7 @@ const debugAndSetupRentals = async () => {
     }
     
   } catch (error) {
-    console.error('❌ Setup error:', error);
+    console.error('❌ Supabase Error', { message: error.message, details: error.details, hint: error.hint, code: error.code });
   }
 };
 

@@ -1,7 +1,7 @@
 import { useParams } from "react-router-dom";
 import { useEffect, useState } from "react";
 import InvoiceTemplate from "@/components/InvoiceTemplate";
-import { supabase } from "../../utils/supabaseClient";
+import { supabase } from "../../lib/supabase";
 
 // Helper function to format dates and times
 const formatRentalDates = (rental) => {
@@ -65,50 +65,85 @@ export default function InvoicePage() {
         setLoading(true);
         setError(null);
 
-        const { data, error: fetchError } = await supabase
+        // Step 1: Fetch Rental Data
+        const { data: rentalData, error: rentalError } = await supabase
           .from("app_4c3a7a6153_rentals")
-          .select(`
-            *,
-            vehicle:saharax_0u4w4d_vehicles(name, plate_number),
-            customer:app_4c3a7a6153_customers(nationality)
-          `)
+          .select(`*`)
           .eq("id", id)
           .single();
 
-        if (fetchError) {
-          throw fetchError;
+        if (rentalError) {
+            console.error('❌ [Rental] fetch error', rentalError);
+            throw rentalError;
+        }
+        if (!rentalData) throw new Error("Rental not found.");
+
+        // Step 2: Fetch Vehicle Data
+        let vehicleData = null;
+        if (rentalData.vehicle_id) {
+            const { data, error: vehicleError } = await supabase
+              .from("saharax_0u4w4d_vehicles")
+              .select("*")
+              .eq("id", rentalData.vehicle_id)
+              .single();
+            if (vehicleError) {
+                console.error('❌ [Vehicle] fetch error', vehicleError);
+            } else {
+                vehicleData = data;
+            }
         }
 
-        if (!data) {
-          throw new Error("Rental not found.");
+        // Step 3: Fetch Customer Data
+        let customerData = null;
+        if (rentalData.customer_id) {
+            const { data, error: customerError } = await supabase
+              .from("app_4c3a7a6153_customers")
+              .select("*")
+              .eq("id", rentalData.customer_id)
+              .single();
+            if (customerError) {
+                console.error('❌ [Customer] fetch error', customerError);
+            } else {
+                customerData = data;
+            }
         }
+        
+        // Step 4: Combine Data
+        const combinedData = {
+          ...rentalData,
+          vehicle: vehicleData,
+          customer: customerData,
+        };
 
-        const { startDate, endDate } = formatRentalDates(data);
-        const customerInfo = data.customer;
-
+        const { startDate, endDate } = formatRentalDates(combinedData);
+        
         const rentalDataForTemplate = {
             start_date: startDate,
             end_date: endDate,
-            customer_name: data.customer_name || '',
-            customer_email: data.customer_email || '',
-            customer_phone: data.customer_phone || '',
-            customer_license_number: data.customer_licence_number || '',
-            nationality: customerInfo ? customerInfo.nationality : null,
-            vehicle_details: data.vehicle ? { 
-                name: data.vehicle.name || '',
-                plate_number: data.vehicle.plate_number || '' 
+            customer_name: combinedData.customer_name || '',
+            customer_email: combinedData.customer_email || '',
+            customer_phone: combinedData.customer_phone || '',
+            customer_license_number: combinedData.customer_licence_number || '',
+            nationality: combinedData.customer ? combinedData.customer.nationality : null,
+            vehicle_details: combinedData.vehicle ? { 
+                name: combinedData.vehicle.name || '',
+                plate_number: combinedData.vehicle.plate_number || '' 
             } : { name: '', plate_number: '' },
-            signature_url: data.signature_url || '',
-            ...data
+            signature_url: combinedData.signature_url || '',
+            ...combinedData
         };
         
-        // Clean up the joined object to avoid confusion
         delete rentalDataForTemplate.vehicle;
         delete rentalDataForTemplate.customer;
 
         setRental(rentalDataForTemplate);
       } catch (err) {
-        console.error("Error loading rental data:", err);
+        console.error('❌ Error loading rental data for invoice', {
+          message: err.message,
+          code: err.code,
+          details: err.details,
+          hint: err.hint
+        });
         setError(`Failed to load rental information: ${err.message}`);
       } finally {
         setLoading(false);

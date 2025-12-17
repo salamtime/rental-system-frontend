@@ -587,7 +587,32 @@ class EnhancedUnifiedCustomerService {
       
     } catch (error) {
       console.error('❌ Error in deleteCustomer:', error);
-      throw error;
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Bulk delete customers by their IDs.
+   */
+  static async deleteCustomers(customerIds) {
+    if (!customerIds || customerIds.length === 0) {
+      return { success: true, message: 'No customers selected for deletion.' };
+    }
+    try {
+      const { data, error } = await supabase
+        .from('app_4c3a7a6153_customers')
+        .delete()
+        .in('id', customerIds);
+
+      if (error) {
+        console.error('Error during bulk customer deletion:', error);
+        throw new Error(`Bulk deletion failed: ${error.message}`);
+      }
+      
+      return { success: true, message: `${customerIds.length} customers deleted successfully.` };
+    } catch (error) {
+      console.error('Error in deleteCustomers:', error);
+      return { success: false, error: error.message };
     }
   }
 
@@ -861,9 +886,32 @@ class EnhancedUnifiedCustomerService {
   }
 
   /**
+   * Check if a customer has any rental history.
+   */
+  static async checkCustomerRentalHistory(customerId) {
+    if (!customerId) {
+      return { success: false, error: 'Customer ID is required.', hasHistory: false };
+    }
+    try {
+      const { count, error } = await supabase
+        .from('app_4c3a7a6153_rentals')
+        .select('*', { count: 'exact', head: true })
+        .eq('customer_id', customerId);
+
+      if (error) {
+        console.error('Error checking rental history:', error);
+        throw new Error(`Failed to check rental history: ${error.message}`);
+      }
+      
+      return { success: true, hasHistory: count > 0 };
+    } catch (error) {
+      console.error('Error in checkCustomerRentalHistory:', error);
+      return { success: false, error: error.message, hasHistory: false };
+    }
+  }
+
+  /**
    * Fetch rental history for a specific customer.
-   * @param {string} customerId - The ID of the customer.
-   * @returns {Promise<Object>} An object containing success status, and data or an error message.
    */
   static async getCustomerRentalHistory(customerId) {
     if (!customerId) {
@@ -908,3 +956,19 @@ class EnhancedUnifiedCustomerService {
 }
 
 export default EnhancedUnifiedCustomerService;
+
+export const {
+  saveCustomer,
+  processSequentialImageUpload,
+  getCustomerById,
+  getAllCustomers,
+  deleteCustomer,
+  deleteCustomers,
+  searchCustomers,
+  getCustomerByLicenceNumber,
+  getCustomerByIdNumber,
+  debugCustomerRecord,
+  runDiagnostics,
+  checkCustomerRentalHistory,
+  getCustomerRentalHistory,
+} = EnhancedUnifiedCustomerService;

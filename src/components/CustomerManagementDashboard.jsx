@@ -9,6 +9,7 @@ import {
   Download,
 } from 'lucide-react';
 import CustomerService from '../services/EnhancedUnifiedCustomerService';
+import ViewCustomerDetailsDrawer from './admin/ViewCustomerDetailsDrawer';
 
 // Hardcoded Supabase credentials
 const SUPABASE_URL = 'https://nnaymteoxvdnsnhlyvkk.supabase.co';
@@ -599,55 +600,11 @@ const CustomerManagementDashboard = () => {
       </div>
 
       {viewModalOpen && selectedCustomer && (
-        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
-          <div className="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-1/2 shadow-lg rounded-md bg-white">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-gray-900">Customer Details</h3>
-              <button onClick={() => setViewModalOpen(false)} className="text-gray-400 hover:text-gray-600"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button>
-            </div>
-            <div className="space-y-6">
-              <div>
-                <h4 className="text-md font-semibold text-gray-800 mb-3">Personal Information</h4>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                  <div><span className="font-medium text-gray-600">Full Name:</span><p className="text-gray-900">{selectedCustomer.full_name}</p></div>
-                  <div><span className="font-medium text-gray-600">Customer ID:</span><p className="text-gray-900 text-xs break-all">{selectedCustomer.id}</p></div>
-                  <div><span className="font-medium text-gray-600">Email:</span><p className="text-gray-900">{selectedCustomer.email || 'N/A'}</p></div>
-                  <div><span className="font-medium text-gray-600">Phone:</span><p className="text-gray-900">{selectedCustomer.phone || 'N/A'}</p></div>
-                </div>
-              </div>
-              <div>
-                <h4 className="text-md font-semibold text-gray-800 mb-3">Rental History ({(selectedCustomer.rentalHistory || []).length} rentals)</h4>
-                {(selectedCustomer.rentalHistory || []).length === 0 ? (
-                  <p className="text-gray-500 text-sm">No rental history available.</p>
-                ) : (
-                  <div className="max-h-64 overflow-y-auto">
-                    <div className="space-y-3">
-                      {(selectedCustomer.rentalHistory || []).map((rental) => (
-                        <div key={rental.id} className="border border-gray-200 rounded-lg p-3">
-                          <div className="flex justify-between items-start mb-2">
-                            <div>
-                              <p className="font-medium text-gray-900 text-sm">{rental.vehicle_model} - {rental.vehicle_plate_number}</p>
-                              <Link to={`/admin/rentals/${rental.id}`} className="text-xs text-blue-600 hover:underline">
-                                Rental ID: {rental.rental_id || rental.id}
-                              </Link>
-                            </div>
-                            <span className={`px-2 py-1 text-xs font-semibold rounded-full ${rental.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>{rental.status}</span>
-                          </div>
-                          <div className="grid grid-cols-2 gap-2 text-xs text-gray-600">
-                            <div><span className="font-medium">Start:</span> {formatDate(rental.rental_start_date)}</div>
-                            <div><span className="font-medium">End:</span> {formatDate(rental.rental_end_date)}</div>
-                            <div><span className="font-medium">Amount:</span> {formatCurrency(rental.total_amount || 0)}</div>
-                            <div><span className="font-medium">Booked:</span> {formatDate(rental.created_at)}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
+        <ViewCustomerDetailsDrawer
+          isOpen={viewModalOpen}
+          onClose={() => setViewModalOpen(false)}
+          customerId={selectedCustomer.id}
+        />
       )}
     </div>
   );

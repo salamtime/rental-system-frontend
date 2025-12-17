@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, User, Phone, Mail, Calendar, CreditCard, Eye, FileImage, Trash2, Download, MapPin, Car } from 'lucide-react';
+import { X, User, Phone, Mail, Calendar, CreditCard, Eye, FileImage, Trash2, Download, MapPin, Car, Clock } from 'lucide-react';
 import unifiedCustomerService from '../../services/UnifiedCustomerService.js';
 import enhancedUnifiedCustomerService from '../../services/EnhancedUnifiedCustomerService.js';
 
@@ -15,6 +15,7 @@ const EnhancedViewCustomerDetailsDrawer = ({
 }) => {
   const [customer, setCustomer] = useState(null);
   const [customerScans, setCustomerScans] = useState([]);
+  const [rentalHistory, setRentalHistory] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showImageModal, setShowImageModal] = useState(false);
@@ -31,66 +32,71 @@ const EnhancedViewCustomerDetailsDrawer = ({
   const loadCustomerData = async () => {
     setLoading(true);
     setError(null);
-    
+    setCustomer(null);
+    setRentalHistory([]);
+    setCustomerScans([]);
+    setScanStats(null);
+
     try {
-      console.log('🔍 Loading enhanced customer data with secondary scan data - customerId:', customerId, 'rental:', rental?.id);
-      let customerData;
-      let targetCustomerId;
-      
-      if (customerId) {
-        targetCustomerId = customerId;
-        // SOLUTION: Use enhanced service to get secondary scan data
-        const result = await enhancedUnifiedCustomerService.getCustomerWithSecondaryData(customerId);
+      const targetCustomerId = customerId || rental?.customer_id;
+      console.log('🔍 Loading data for customerId:', targetCustomerId, 'from rental:', rental?.id);
+
+      let customerDetails = {};
+      let isRealCustomer = false;
+
+      // 1. Use rental data as a baseline fallback for contact info
+      if (rental) {
+        customerDetails = {
+          full_name: rental.customer_name,
+          email: rental.customer_email,
+          phone: rental.customer_phone,
+          licence_number: rental.customer_license, // Fallback for license
+        };
+      }
+
+      // 2. If we have a customer ID, fetch the full profile
+      if (targetCustomerId) {
+        const result = await enhancedUnifiedCustomerService.getCustomerWithSecondaryData(targetCustomerId);
+        
         if (result.success && result.data) {
-          customerData = result.data;
-          customerData._isRealCustomer = true;
-        }
-      } else if (rental) {
-        if (rental.customer_id) {
-          targetCustomerId = rental.customer_id;
-          // SOLUTION: Use enhanced service to get secondary scan data
-          const result = await enhancedUnifiedCustomerService.getCustomerWithSecondaryData(rental.customer_id);
-          if (result.success && result.data) {
-            customerData = result.data;
-            customerData._isRealCustomer = true;
-          }
+          // 3. Merge fetched data over the rental fallback data.
+          //    The spread order ensures fetched data overwrites rental data if properties conflict.
+          customerDetails = { ...customerDetails, ...result.data };
+          isRealCustomer = true;
         }
         
-        if (!customerData) {
-          customerData = {
-            full_name: rental.customer_name,
-            email: rental.customer_email,
-            phone: rental.customer_phone,
-            _isRealCustomer: false,
-            _sourceRental: rental.id
-          };
-        }
+        // 4. Always try to load history and scans if an ID is present
+        await loadRentalHistory(targetCustomerId);
+        await loadCustomerScans(targetCustomerId);
       }
       
-      if (customerData) {
-        const formattedCustomer = {
-          ...customerData,
-          displayName: customerData.full_name || customerData.customer_name || 'Unknown Customer',
-          displayId: customerData.id_number || customerData.document_number || customerData.id || 'No ID',
-          displayPhone: customerData.phone || 'No phone',
-          displayEmail: customerData.email || 'No email'
-        };
-        
-        setCustomer(formattedCustomer);
-
-        // Load all scans for this customer if it's a real customer
-        if (targetCustomerId && customerData._isRealCustomer) {
-          await loadCustomerScans(targetCustomerId);
-        }
+      // 5. Set the final customer state if we have any data
+      if (Object.keys(customerDetails).length > 0) {
+        setCustomer({ ...customerDetails, _isRealCustomer: isRealCustomer });
       } else {
         setError('Customer information not available');
       }
-      
+
     } catch (err) {
       console.error('❌ Error loading customer data:', err);
       setError('Failed to load customer information: ' + err.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadRentalHistory = async (customerId) => {
+    try {
+      const result = await enhancedUnifiedCustomerService.getCustomerRentalHistory(customerId);
+      if (result.success) {
+        setRentalHistory(result.data);
+      } else {
+        console.warn("Could not fetch rental history:", result.error);
+        setRentalHistory([]);
+      }
+    } catch (err) {
+      console.error("Error loading rental history:", err);
+      setRentalHistory([]);
     }
   };
 
@@ -148,11 +154,25 @@ const EnhancedViewCustomerDetailsDrawer = ({
   const handleClose = () => {
     setCustomer(null);
     setCustomerScans([]);
+    setRentalHistory([]);
     setScanStats(null);
     setError(null);
     setShowImageModal(false);
     setSelectedImageUrl(null);
     onClose();
+  };
+  
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    try {
+      return new Date(dateString).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+      });
+    } catch {
+      return 'Invalid Date';
+    }
   };
 
   // Image modal component
@@ -299,9 +319,9 @@ const EnhancedViewCustomerDetailsDrawer = ({
                       </div>
 
                       <div>
-                        <label className="block text-sm font-medium text-gray-700">Primary Address</label>
+                        <label className="block text-sm font-medium text-gray-700">License</label>
                         <p className="mt-1 text-sm text-gray-900 bg-gray-50 p-2 rounded border">
-                          {customer.address || 'N/A'}
+                          {customer.licence_number || 'N/A'}
                         </p>
                       </div>
                     </div>
@@ -430,6 +450,40 @@ const EnhancedViewCustomerDetailsDrawer = ({
                         </p>
                       </div>
                     </div>
+                  </div>
+                </div>
+
+                {/* Rental History */}
+                <div className="space-y-4">
+                  <h3 className="text-lg font-medium text-gray-900 flex items-center">
+                    <Clock className="h-5 w-5 mr-2" />
+                    Rental History ({rentalHistory.length})
+                  </h3>
+                  <div className="border border-gray-200 rounded-lg p-4 max-h-64 overflow-y-auto">
+                    {rentalHistory.length > 0 ? (
+                      <div className="space-y-3">
+                        {rentalHistory.map(r => (
+                          <div key={r.id} className="block p-3 bg-white rounded-lg border hover:bg-gray-100">
+                            <div className="flex justify-between items-center">
+                              <p className="font-semibold text-sm">{r.vehicle?.name || 'Unknown Vehicle'}</p>
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                                r.rental_status === 'completed' ? 'bg-blue-100 text-blue-800' :
+                                r.rental_status === 'active' ? 'bg-green-100 text-green-800' :
+                                'bg-gray-100 text-gray-800'
+                              }`}>{r.rental_status}</span>
+                            </div>
+                            <p className="text-xs text-gray-500">{formatDate(r.rental_start_date)} - {formatDate(r.rental_end_date)}</p>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                       <div className="flex items-center justify-center h-32 bg-gray-50 border border-gray-200 rounded-lg">
+                        <div className="text-center text-gray-500">
+                          <Clock className="h-12 w-12 mx-auto mb-2" />
+                          <p className="text-sm">No rental history found.</p>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
 

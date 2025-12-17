@@ -9,6 +9,8 @@ const RentalForm = ({ onSubmit, initialData = null, isLoading = false }) => {
     customer_name: '',
     customer_email: '',
     customer_phone: '',
+    second_driver_name: '',
+    second_driver_license: '',
     rental_type: 'daily',
     rental_start_date: '',
     rental_end_date: '',
@@ -45,6 +47,8 @@ const RentalForm = ({ onSubmit, initialData = null, isLoading = false }) => {
         customer_name: initialData.customer_name || '',
         customer_email: initialData.customer_email || '',
         customer_phone: initialData.customer_phone || '',
+        second_driver_name: initialData.second_driver_name || '',
+        second_driver_license: initialData.second_driver_license || '',
         rental_type: initialData.rental_type || 'daily',
         rental_start_date: initialData.rental_start_date || '',
         rental_end_date: initialData.rental_end_date || '',
@@ -217,6 +221,40 @@ const RentalForm = ({ onSubmit, initialData = null, isLoading = false }) => {
             {errors.customer_phone && (
               <p className="text-red-500 text-xs mt-1">{errors.customer_phone}</p>
             )}
+          </div>
+        </div>
+      </div>
+
+      {/* Second Driver Information Section */}
+      <div className="space-y-4">
+        <div className="flex items-center gap-2 text-lg font-semibold text-gray-900">
+          <User className="h-5 w-5" />
+          Second Driver Information (Optional)
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Second Driver Name
+            </label>
+            <input
+              type="text"
+              value={formData.second_driver_name}
+              onChange={(e) => handleInputChange('second_driver_name', e.target.value)}
+              placeholder="Enter second driver's name"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Second Driver License
+            </label>
+            <input
+              type="text"
+              value={formData.second_driver_license}
+              onChange={(e) => handleInputChange('second_driver_license', e.target.value)}
+              placeholder="Enter second driver's license"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
           </div>
         </div>
       </div>

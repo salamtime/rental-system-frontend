@@ -56,15 +56,12 @@ const AvailabilityAwareRentalForm = ({
     second_driver_license: '',
     second_driver_id_image: null,
     customer_id_image: null,
-    second_driver_customer_id: null,
   });
 
   const [loading, setLoading] = useState(false);
-  const [isCreatingSecondDriver, setIsCreatingSecondDriver] = useState(false);
   const [error, setError] = useState(null);
   const [dateError, setDateError] = useState(null);
   const [success, setSuccess] = useState(null);
-  const [secondDriverSuccess, setSecondDriverSuccess] = useState(null);
   const [debugInfo, setDebugInfo] = useState(null);
   const [vehicleModels, setVehicleModels] = useState([]);
   const [transportFees, setTransportFees] = useState({
@@ -129,8 +126,11 @@ const AvailabilityAwareRentalForm = ({
   }, [initialData, mode]);
 
   const composeDateTime = (date, time) => {
+    if (!date) {
+      return null;
+    }
     const localDate = parseDateAsLocal(date);
-    if (!localDate) {
+    if (!localDate || isNaN(localDate.getTime())) {
         console.error('Composed invalid date from string:', date);
         return null;
     }
@@ -140,7 +140,8 @@ const AvailabilityAwareRentalForm = ({
     
     if (isNaN(hours) || isNaN(minutes)) {
         console.error('Invalid time format:', timeToUse);
-        return localDate; // Return date at midnight
+        localDate.setHours(0, 0, 0, 0);
+        return localDate;
     }
 
     localDate.setHours(hours, minutes, 0, 0);
@@ -798,9 +799,21 @@ const AvailabilityAwareRentalForm = ({
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    const submissionReadyFormData = { ...formData };
+
+    const currentTime = new Date().toTimeString().slice(0, 5);
+    if (!submissionReadyFormData.rental_start_time) {
+      console.log('⏰ AUTO-FILL: Start time is empty, setting to current time:', currentTime);
+      submissionReadyFormData.rental_start_time = currentTime;
+    }
+    if (!submissionReadyFormData.rental_end_time) {
+      console.log('⏰ AUTO-FILL: End time is empty, setting to current time:', currentTime);
+      submissionReadyFormData.rental_end_time = currentTime;
+    }
     
     console.log('📝 FIXED SUBMISSION: Form submission started...');
-    console.log('📊 Current form data:', formData);
+    console.log('📊 Current form data (with auto-filled time):', submissionReadyFormData);
     console.log('🔍 Submission state:', { canSubmit, loading, availabilityStatus });
     
     if (dateError) {
@@ -814,16 +827,16 @@ const AvailabilityAwareRentalForm = ({
       return;
     }
     
-    if (!formData.customer_name || !formData.customer_phone || 
-        !formData.vehicle_id || !formData.rental_start_date || !formData.rental_end_date) {
+    if (!submissionReadyFormData.customer_name || !submissionReadyFormData.customer_phone || 
+        !submissionReadyFormData.vehicle_id || !submissionReadyFormData.rental_start_date || !submissionReadyFormData.rental_end_date) {
       console.log('❌ Missing required fields');
       setError('Please fill in all required fields: Customer name, phone, vehicle, start date, and end date.');
       return;
     }
     
-    const trimmedEmail = formData.customer_email ? formData.customer_email.trim() : '';
+    const trimmedEmail = (submissionReadyFormData.customer_email || '').trim();
 
-    if (trimmedEmail) {
+    if (trimmedEmail.length > 0) {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
       if (!emailRegex.test(trimmedEmail)) {
         console.log('❌ Invalid email format');
@@ -837,89 +850,37 @@ const AvailabilityAwareRentalForm = ({
     setLoading(true);
     setError(null);
     setSuccess(null);
-    setSecondDriverSuccess(null);
     setDebugInfo(null);
 
-    let secondDriverCustomerId = null;
-
     try {
-      // Create second driver as customer BEFORE creating rental
-      if (formData.second_driver_name && formData.second_driver_license) {
-        setIsCreatingSecondDriver(true);
-        const newSecondDriverAsCustomer = {
-            id: generateCustomerId(),
-            full_name: formData.second_driver_name,
-            phone: null,
-            email: null,
-            licence_number: formData.second_driver_license,
-            id_number: null,
-            date_of_birth: null,
-            nationality: null,
-            address: null,
-            id_scan_url: formData.second_driver_id_image || null,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-        };
-
-        console.log('👥 Second driver info found, attempting to create new customer with data:', newSecondDriverAsCustomer);
-        
-        try {
-          const saveSecondDriverResult = await enhancedUnifiedCustomerService.saveCustomer(newSecondDriverAsCustomer);
-          console.log('📝 Second driver save result:', saveSecondDriverResult);
-
-          if (saveSecondDriverResult.success && saveSecondDriverResult.data) {
-            secondDriverCustomerId = saveSecondDriverResult.data.id;
-            console.log('✅ Successfully created a new customer for the second driver:', secondDriverCustomerId);
-            setSecondDriverSuccess('Second driver was successfully added as a new customer.');
-          } else {
-            console.error('❌ Failed to create customer for second driver:', saveSecondDriverResult.error);
-            throw new Error(`Failed to save second driver: ${saveSecondDriverResult.error || 'Unknown error'}`);
-          }
-        } catch (secondDriverError) {
-          console.error('❌ An exception occurred while creating the second driver customer:', secondDriverError);
-          throw new Error(`An exception occurred while saving the second driver: ${secondDriverError.message}`);
-        } finally {
-          setIsCreatingSecondDriver(false);
-        }
-      }
-
-      let finalCustomerId = formData.customer_id;
+      let finalCustomerId = submissionReadyFormData.customer_id;
       
       if (!finalCustomerId) {
-        console.log('🔍 Customer ID missing, attempting to find or create customer...');
+        console.log('🆕 Customer ID missing, creating new customer record...');
+        const newCustomerId = generateCustomerId();
         
-        const searchResult = await enhancedUnifiedCustomerService.searchByPhone(formData.customer_phone);
+        const newCustomerData = {
+          id: newCustomerId,
+          full_name: submissionReadyFormData.customer_name,
+          phone: submissionReadyFormData.customer_phone,
+          email: trimmedEmail || null,
+          licence_number: submissionReadyFormData.customer_licence_number || null,
+          id_number: submissionReadyFormData.customer_id_number || null,
+          date_of_birth: submissionReadyFormData.customer_dob || null,
+          nationality: submissionReadyFormData.customer_nationality || null,
+          address: null,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
         
-        if (searchResult.success && searchResult.data && searchResult.data.length > 0) {
-          finalCustomerId = searchResult.data[0].id;
-          console.log('✅ Found existing customer by phone:', finalCustomerId);
+        console.log('💾 Saving new customer:', newCustomerData);
+        const saveResult = await enhancedUnifiedCustomerService.saveCustomer(newCustomerData);
+        
+        if (saveResult.success) {
+          finalCustomerId = newCustomerId;
+          console.log('✅ Created new customer:', finalCustomerId);
         } else {
-          console.log('🆕 Customer not found, creating new customer record...');
-          const newCustomerId = generateCustomerId();
-          
-          const newCustomerData = {
-            id: newCustomerId,
-            full_name: formData.customer_name,
-            phone: formData.customer_phone,
-            email: trimmedEmail || null,
-            licence_number: formData.customer_licence_number || null,
-            id_number: formData.customer_id_number || null,
-            date_of_birth: formData.customer_dob || null,
-            nationality: formData.customer_nationality || null,
-            address: null,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString()
-          };
-          
-          console.log('💾 Saving new customer:', newCustomerData);
-          const saveResult = await enhancedUnifiedCustomerService.saveCustomer(newCustomerData);
-          
-          if (saveResult.success) {
-            finalCustomerId = newCustomerId;
-            console.log('✅ Created new customer:', finalCustomerId);
-          } else {
-            throw new Error(`Failed to create new customer: ${saveResult.error}`);
-          }
+          throw new Error(`Failed to create new customer: ${saveResult.error}`);
         }
         
         setFormData(prev => ({
@@ -929,35 +890,34 @@ const AvailabilityAwareRentalForm = ({
       }
 
       const submissionData = {
-        ...formData,
+        ...submissionReadyFormData,
         customer_id: finalCustomerId,
-        second_driver_customer_id: secondDriverCustomerId, // Add the new ID here
         
-        vehicle_id: formData.vehicle_id ? Number(formData.vehicle_id) : null,
-        quantity_days: Number(formData.quantity_days) || 0,
-        unit_price: Number(formData.unit_price) || 0,
-        transport_fee: Number(formData.transport_fee) || 0,
-        total_amount: Number(formData.total_amount) || 0,
-        deposit_amount: Number(formData.deposit_amount) || 0,
-        damage_deposit: Number(formData.damage_deposit) || 0,
-        remaining_amount: Number(formData.remaining_amount) || 0,
+        vehicle_id: submissionReadyFormData.vehicle_id ? Number(submissionReadyFormData.vehicle_id) : null,
+        quantity_days: Number(submissionReadyFormData.quantity_days) || 0,
+        unit_price: Number(submissionReadyFormData.unit_price) || 0,
+        transport_fee: Number(submissionReadyFormData.transport_fee) || 0,
+        total_amount: Number(submissionReadyFormData.total_amount) || 0,
+        deposit_amount: Number(submissionReadyFormData.deposit_amount) || 0,
+        damage_deposit: Number(submissionReadyFormData.damage_deposit) || 0,
+        remaining_amount: Number(submissionReadyFormData.remaining_amount) || 0,
 
-        rental_status: formData.rental_status || 'scheduled',
-        payment_status: formData.payment_status || 'unpaid',
+        rental_status: submissionReadyFormData.rental_status || 'scheduled',
+        payment_status: submissionReadyFormData.payment_status || 'unpaid',
 
-        rental_start_at: composeDateTime(formData.rental_start_date, formData.rental_start_time)?.toISOString(),
-        rental_end_at: composeDateTime(formData.rental_end_date, formData.rental_end_time)?.toISOString(),
+        rental_start_at: composeDateTime(submissionReadyFormData.rental_start_date, submissionReadyFormData.rental_start_time)?.toISOString(),
+        rental_end_at: composeDateTime(submissionReadyFormData.rental_end_date, submissionReadyFormData.rental_end_time)?.toISOString(),
 
         customer_email: trimmedEmail || null,
-        accessories: formData.accessories || null,
-        customer_licence_number: formData.customer_licence_number || null,
-        customer_id_number: formData.customer_id_number || null,
-        customer_dob: formData.customer_dob || null,
-        customer_place_of_birth: formData.customer_place_of_birth || null,
-        customer_nationality: formData.customer_nationality || null,
-        customer_issue_date: formData.customer_issue_date || null,
-        linked_display_id: formData.linked_display_id || null, 
-        signature_url: formData.signature_url || null,
+        accessories: submissionReadyFormData.accessories || null,
+        customer_licence_number: submissionReadyFormData.customer_licence_number || null,
+        customer_id_number: submissionReadyFormData.customer_id_number || null,
+        customer_dob: submissionReadyFormData.customer_dob || null,
+        customer_place_of_birth: submissionReadyFormData.customer_place_of_birth || null,
+        customer_nationality: submissionReadyFormData.customer_nationality || null,
+        customer_issue_date: submissionReadyFormData.customer_issue_date || null,
+        linked_display_id: submissionReadyFormData.linked_display_id || null, 
+        signature_url: submissionReadyFormData.signature_url || null,
       };
 
       delete submissionData.vehicle;
@@ -992,7 +952,6 @@ const AvailabilityAwareRentalForm = ({
     } catch (err) {
       console.error('❌ Final Submission Error:', err);
       setLoading(false);
-      setIsCreatingSecondDriver(false);
 
       let errorMessage = 'An unexpected error occurred during rental creation.';
       let nextAvailableTime = null;
@@ -1138,11 +1097,9 @@ const AvailabilityAwareRentalForm = ({
       second_driver_license: '',
       second_driver_id_image: null,
       customer_id_image: null,
-      second_driver_customer_id: null,
     });
     setError(null);
     setSuccess(null);
-    setSecondDriverSuccess(null);
     setDebugInfo(null);
     setAvailabilityStatus('unknown');
     setAvailabilityDetails(null);
@@ -1434,18 +1391,6 @@ const AvailabilityAwareRentalForm = ({
             <h3 className="text-lg font-semibold text-indigo-900 mb-4">
               👥 Second Driver (Optional)
             </h3>
-            {isCreatingSecondDriver && (
-              <div className="flex items-center justify-center p-3 bg-indigo-100 rounded-md">
-                <Loader className="animate-spin h-5 w-5 text-indigo-600 mr-3" />
-                <span className="text-sm font-medium text-indigo-800">Creating customer profile for second driver...</span>
-              </div>
-            )}
-            {secondDriverSuccess && (
-              <div className="p-3 bg-green-100 border border-green-200 rounded-md flex items-center">
-                <CheckCircle className="h-5 w-5 text-green-500 mr-3" />
-                <p className="text-sm font-medium text-green-800">{secondDriverSuccess}</p>
-              </div>
-            )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">

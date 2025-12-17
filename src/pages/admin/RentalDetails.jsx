@@ -73,8 +73,6 @@ export default function RentalDetails() {
     rental: null
   });
 
-  const [isFindingSecondDriver, setIsFindingSecondDriver] = useState(false);
-
   const contractRef = useRef();
   const invoiceRef = useRef();
   const handlePrintContract = useReactToPrint({
@@ -338,82 +336,6 @@ export default function RentalDetails() {
   }, [id]);
 
   useEffect(() => {
-    const findSecondDriver = async () => {
-      if (rental && rental.second_driver_name && !rental.second_driver_customer_id) {
-        setIsFindingSecondDriver(true);
-        try {
-          // Fetch main driver's license to prevent duplication
-          const { data: mainDriverData, error: mainDriverError } = await supabase
-            .from('app_4c3a7a6153_customers')
-            .select('licence_number')
-            .eq('id', rental.customer_id)
-            .single();
-
-          if (mainDriverError) {
-            console.error("Validation failed: Could not fetch main driver's license.", mainDriverError);
-          } else {
-              const mainLicence = mainDriverData.licence_number;
-              const secondLicence = rental.second_driver_license;
-              
-              console.log(`[Validation Check] Main driver license: "${mainLicence}", Second driver license: "${secondLicence}"`);
-
-              if (secondLicence && mainLicence === secondLicence) {
-                alert("Second driver licence must be different from main driver");
-                return; 
-              }
-          }
-
-          let customer = null;
-          // Try to find by license first
-          if (rental.second_driver_license) {
-            const { data: customerByLicense, error: licenseError } = await supabase
-              .from('app_4c3a7a6153_customers')
-              .select('id')
-              .eq('licence_number', rental.second_driver_license)
-              .single();
-            if (licenseError && licenseError.code !== 'PGRST116') { // PGRST116: no rows returned
-              console.error('❌ Supabase Error', { message: licenseError.message, details: licenseError.details, hint: licenseError.hint, code: licenseError.code });
-            }
-            if (customerByLicense) {
-              customer = customerByLicense;
-            }
-          }
-
-          // If not found by license, try by name
-          if (!customer && rental.second_driver_name) {
-            const { data: customerByName, error: nameError } = await supabase
-              .from('app_4c3a7a6153_customers')
-              .select('id')
-              .eq('full_name', rental.second_driver_name)
-              .single();
-            if (nameError && nameError.code !== 'PGRST116') {
-              console.error('❌ Supabase Error', { message: nameError.message, details: nameError.details, hint: nameError.hint, code: nameError.code });
-            }
-            if (customerByName) {
-              customer = customerByName;
-            }
-          }
-
-          if (customer) {
-            setRental(prev => ({ ...prev, second_driver_customer_id: customer.id }));
-            // Also update the rental record in the database
-            await supabase
-              .from('app_4c3a7a6153_rentals')
-              .update({ second_driver_customer_id: customer.id })
-              .eq('id', rental.id);
-          }
-        } catch (err) {
-          console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
-        } finally {
-          setIsFindingSecondDriver(false);
-        }
-      }
-    };
-
-    findSecondDriver();
-  }, [rental]);
-
-  useEffect(() => {
     if (!rental?.rental_end_date || rental.rental_status !== 'active') return;
 
     const interval = setInterval(() => {
@@ -664,18 +586,6 @@ export default function RentalDetails() {
     });
   };
 
-  const handleSecondDriverDetailsClick = () => {
-    if (isFindingSecondDriver) {
-        alert("Still searching for the second driver's record. Please wait a moment.");
-        return;
-    }
-    if (rental.second_driver_customer_id) {
-        handleViewCustomerDetails(rental.second_driver_customer_id);
-    } else {
-        alert("Could not automatically locate the second driver's customer record. Please check the customer list manually.");
-    }
-  };
-
   if (loading) return <div className="flex items-center justify-center min-h-screen"><p>Loading...</p></div>;
   if (error) return <div className="flex items-center justify-center min-h-screen"><p>{error}</p></div>;
   if (!rental) return <div className="flex items-center justify-center min-h-screen"><p>Rental not found</p></div>;
@@ -780,14 +690,6 @@ export default function RentalDetails() {
               <Separator />
               <div>
                 <h3 className="font-semibold mb-3 text-lg">Second Driver Details</h3>
-                <Button
-                  onClick={handleSecondDriverDetailsClick}
-                  size="sm"
-                  className="bg-blue-100 text-blue-800 hover:bg-blue-200"
-                >
-                  <User className="w-4 h-4 mr-2" />
-                  {isFindingSecondDriver ? 'Finding...' : 'View Details'}
-                </Button>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 mt-2 text-sm sm:text-base">
                   <p><strong>Full Name:</strong> {rental.second_driver_name}</p>
                   <p><strong>License:</strong> {rental.second_driver_license || 'N/A'}</p>
@@ -953,14 +855,22 @@ export default function RentalDetails() {
         <div className="flex justify-center gap-2">
           {isScheduled && (
             <>
-              <Button onClick={startRental} disabled={!canStartRental} className={`flex-1 ${!canStartRental ? 'bg-gray-300' : 'bg-green-600 hover:bg-green-700 text-white'}`}>\n                <PlayCircle className="w-4 h-4 mr-1" /> Start\n              </Button>
-              <Button onClick={cancelRental} variant="destructive" className="flex-1">\n                <XCircle className="w-4 h-4 mr-1" /> Cancel\n              </Button>
+              <Button onClick={startRental} disabled={!canStartRental} className={`flex-1 ${!canStartRental ? 'bg-gray-300' : 'bg-green-600 hover:bg-green-700 text-white'}`}>
+                <PlayCircle className="w-4 h-4 mr-1" /> Start
+              </Button>
+              <Button onClick={cancelRental} variant="destructive" className="flex-1">
+                <XCircle className="w-4 h-4 mr-1" /> Cancel
+              </Button>
             </>
           )}
           {isActive && (
             <>
-              <Button onClick={completeRental} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white">\n                <CheckCircle className="w-4 h-4 mr-1" /> Complete\n              </Button>
-              <Button onClick={cancelRental} variant="destructive" className="flex-1">\n                <XCircle className="w-4 h-4 mr-1" /> Cancel\n              </Button>
+              <Button onClick={completeRental} className="flex-1 bg-blue-600 hover:bg-blue-700 text-white">
+                <CheckCircle className="w-4 h-4 mr-1" /> Complete
+              </Button>
+              <Button onClick={cancelRental} variant="destructive" className="flex-1">
+                <XCircle className="w-4 h-4 mr-1" /> Cancel
+              </Button>
             </>
           )}
         </div>

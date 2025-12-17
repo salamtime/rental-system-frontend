@@ -159,10 +159,10 @@ class EnhancedUnifiedCustomerService {
       // If no duplicate was found, proceed to create a new customer.
       console.log('🆕 Creating new customer record...');
       
-      // HIGH-PRIORITY BUGFIX: Create a dedicated object for insertion,
-      // explicitly excluding 'id' to prevent not-null constraint violations.
-      // The database is responsible for generating the ID.
+      // BUG FIX: The customerToInsert object MUST include the ID generated on the client-side.
+      // The previous implementation incorrectly assumed the database would generate the ID.
       const customerToInsert = {
+          id: customerData.id, // CRITICAL FIX: Use the ID from the incoming customerData
           full_name: finalCustomerData.full_name,
           email: finalCustomerData.email,
           phone: finalCustomerData.phone,
@@ -177,25 +177,37 @@ class EnhancedUnifiedCustomerService {
           updated_at: finalCustomerData.updated_at
       };
 
-      const { data: newCustomer, error: createError } = await supabase
-        .from('app_4c3a7a6153_customers')
-        .insert([customerToInsert])
-        .select()
-        .single();
+      // Add a check to ensure the ID is not null before inserting
+      if (!customerToInsert.id) {
+          console.error('❌ CRITICAL ERROR: Attempting to insert a customer without a valid ID.');
+          throw new Error('Customer creation failed because no ID was provided.');
+      }
 
-      if (createError) {
-        // This handles cases where the DB constraint fails, e.g., a race condition.
-        if (createError.code === '23505') { 
-            console.error('❌ Customer creation failed due to unique constraint.', createError);
-            throw new Error('A customer with this name and license number already exists.');
+      console.log('💾 Upserting new customer with explicit ID:', customerToInsert);
+
+      const { data: upsertedCustomerData, error: upsertError } = await supabase
+        .from('app_4c3a7a6153_customers')
+        .upsert(customerToInsert)
+        .select();
+
+      if (upsertError) {
+        // This handles cases where the DB constraint fails, e.g., a race condition on a unique column other than the PK.
+        if (upsertError.code === '23505') { 
+            console.error('❌ Customer upsert failed due to unique constraint.', upsertError);
+            throw new Error('Failed to save customer data due to a conflict. A record with similar unique information (like ID, name, or license) may already exist.');
         }
-        console.error('❌ Customer creation failed:', createError);
-        throw new Error(`Customer creation failed: ${createError.message}`);
+        console.error('❌ Customer upsert failed:', upsertError);
+        throw new Error(`Customer save failed: ${upsertError.message}`);
+      }
+      
+      if (!upsertedCustomerData || upsertedCustomerData.length === 0) {
+        console.error('❌ CRITICAL: Upsert operation returned no data.');
+        throw new Error('Failed to save or retrieve customer data after operation.');
       }
 
       // This variable is used by the verification step later in the function.
-      const customerResult = newCustomer;
-      console.log('✅ Customer created successfully:', customerResult.id);
+      const customerResult = upsertedCustomerData[0];
+      console.log('✅ Customer created/updated successfully:', customerResult.id);
 
       // STEP 9: FINAL VERIFICATION - Confirm id_scan_url and phone were saved to database
       if (idScanUrl && !customerResult.id_scan_url) {
@@ -329,6 +341,7 @@ class EnhancedUnifiedCustomerService {
         
         // Prepare customer data with scan result
         const customerDataWithScan = {
+          id: customerId, // CRITICAL FIX: Pass the customerId to the save function
           ...ocrResult.data,
           id_scan_url: publicUrl, // CRITICAL: Include image URL
           scanUrl: publicUrl // Alternative field name
@@ -507,11 +520,11 @@ class EnhancedUnifiedCustomerService {
       }
       
       console.log('✅ Fetched customer:', data);
-      return data;
+      return { success: true, data };
       
     } catch (error) {
       console.error('❌ Error in getCustomerById:', error);
-      throw error;
+      return { success: false, error: error.message };
     }
   }
 

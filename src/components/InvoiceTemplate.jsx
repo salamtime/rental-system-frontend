@@ -19,6 +19,8 @@ const InvoiceTemplate = forwardRef(({ rental, logoUrl, stampUrl }, ref) => {
     end_date,
     vehicle_details,
     signature_url,
+    second_driver_name,
+    second_driver_license,
   } = rental;
 
   const getCorrectSignatureUrl = (url) => {
@@ -122,6 +124,17 @@ const InvoiceTemplate = forwardRef(({ rental, logoUrl, stampUrl }, ref) => {
             </div>
           </section>
           
+          {/* Second Driver Details */}
+          {second_driver_name && (
+            <section className="mt-8">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-800 border-b pb-2 mb-2">Second Driver Details</h3>
+                <p><strong>Name:</strong> {second_driver_name}</p>
+                <p><strong>License No:</strong> {second_driver_license || "N/A"}</p>
+              </div>
+            </section>
+          )}
+
           {/* Signature Section */}
           <section className="mt-12 pt-8 border-t-2 border-dashed">
             <p className="text-sm text-center text-gray-600 mb-6">By signing below, the Renter acknowledges and agrees to all terms and conditions outlined in this agreement.</p>

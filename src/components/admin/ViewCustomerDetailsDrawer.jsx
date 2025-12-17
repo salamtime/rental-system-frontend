@@ -13,7 +13,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const ViewCustomerDetailsDrawer = ({ 
   isOpen, 
   onClose, 
-  rental = null,
+  rental = null, // The rental prop is optional and might not be present
   customerId = null 
 }) => {
   const [customerData, setCustomerData] = useState(null);
@@ -26,14 +26,12 @@ const ViewCustomerDetailsDrawer = ({
   const [alertMessage, setAlertMessage] = useState(null);
   const fileInputRef = useRef(null);
 
-  // DECOUPLED LOADING - STEP 1: Load primary customer data first.
   useEffect(() => {
     if (isOpen && (rental || customerId)) {
       loadCustomerData();
     }
   }, [isOpen, rental, customerId]);
 
-  // DECOUPLED LOADING - STEP 2: Load secondary rental history after customer data is available.
   useEffect(() => {
     if (customerData && customerData.id) {
       loadRentalHistory(customerData.id);
@@ -51,14 +49,16 @@ const ViewCustomerDetailsDrawer = ({
       const targetCustomerId = customerId || rental?.customer_id;
 
       if (!targetCustomerId) {
+        // Fallback for cases where there's no customer ID but there is a rental object
         if (rental) {
           setCustomerData({
             isRentalBased: true,
-            full_name: rental.customer_name || 'N/A',
-            email: rental.customer_email || rental.email || null,
-            phone: rental.customer_phone || rental.phone || null,
-            created_at: rental.created_at || null,
-            customer_id_image: rental.customer_id_image || null,
+            full_name: rental.customer_name,
+            email: rental.customer_email || rental.email,
+            phone: rental.customer_phone || rental.phone,
+            licence_number: rental.customer_licence_number || rental.licence_number,
+            created_at: rental.created_at,
+            customer_id_image: rental.customer_id_image,
           });
         } else {
           setError('No customer data available to display.');
@@ -67,32 +67,51 @@ const ViewCustomerDetailsDrawer = ({
         return;
       }
 
-      const { data: customer, error: customerError } = await supabase
-        .from('app_4c3a7a6153_customers')
-        .select('*')
-        .eq('id', targetCustomerId)
-        .single();
+      // Fetch customer profile and their latest rental in parallel for robust data fallback
+      const [customerResult, latestRentalResult] = await Promise.all([
+        supabase.from('app_4c3a7a6153_customers').select('*').eq('id', targetCustomerId).single(),
+        supabase.from('app_4c3a7a6153_rentals').select('*').eq('customer_id', targetCustomerId).order('created_at', { ascending: false }).limit(1).single()
+      ]);
 
-      if (customerError && customerError.code !== 'PGRST116') {
-        throw customerError;
+      const { data: customerProfile, error: customerError } = customerResult;
+      const { data: latestRental, error: latestRentalError } = latestRentalResult;
+
+      if (customerError && customerError.code !== 'PGRST116') { // PGRST116 means no rows found, which is not a fatal error
+        throw new Error(`Failed to fetch customer profile: ${customerError.message}`);
+      }
+      
+      if (latestRentalError && latestRentalError.code !== 'PGRST116') {
+         console.warn(`Could not fetch latest rental: ${latestRentalError.message}`);
       }
 
-      let dataToShow;
-      if (customer) {
-        dataToShow = { ...customer, isRentalBased: false };
-      } else if (rental) {
+      let dataToShow = {};
+      const fallbackRental = latestRental || rental; // Use fetched latest rental or the prop rental
+
+      if (customerProfile) {
+        // A complete customer profile exists. Use it as the source of truth.
+        dataToShow = { ...customerProfile, isRentalBased: false };
+        
+        // **CRITICAL FIX**: If profile fields are empty, fall back to the most recent rental data.
+        if (fallbackRental) {
+          dataToShow.email = customerProfile.email || fallbackRental.customer_email || fallbackRental.email;
+          dataToShow.phone = customerProfile.phone || fallbackRental.customer_phone || fallbackRental.phone;
+          dataToShow.licence_number = customerProfile.licence_number || fallbackRental.customer_licence_number || fallbackRental.licence_number;
+        }
+      } else if (fallbackRental) {
+        // No customer profile exists. Construct a temporary profile from the latest rental data.
         dataToShow = {
           id: targetCustomerId,
           isRentalBased: true,
-          full_name: rental.customer_name || 'N/A',
-          email: rental.customer_email || rental.email || null,
-          phone: rental.customer_phone || rental.phone || null,
-          created_at: rental.created_at || null,
-          customer_id_image: rental.customer_id_image || null,
-          id_scan_url: rental.customer?.id_scan_url || null,
+          full_name: fallbackRental.customer_name,
+          email: fallbackRental.customer_email || fallbackRental.email,
+          phone: fallbackRental.customer_phone || fallbackRental.phone,
+          licence_number: fallbackRental.customer_licence_number || fallbackRental.licence_number,
+          created_at: fallbackRental.created_at,
+          customer_id_image: fallbackRental.customer_id_image,
+          id_scan_url: fallbackRental.customer?.id_scan_url,
         };
       } else {
-        setError(`Customer with ID ${targetCustomerId} not found.`);
+        setError(`Customer with ID ${targetCustomerId} not found, and no rental history is available.`);
         setLoading(false);
         return;
       }
@@ -100,35 +119,30 @@ const ViewCustomerDetailsDrawer = ({
       setCustomerData(dataToShow);
 
     } catch (err) {
-      console.error('❌ Error loading primary customer data:', err);
+      console.error('❌ Error loading customer data:', err);
       setError(`Failed to load customer data: ${err.message}`);
     } finally {
       setLoading(false);
     }
   };
 
-  // ROBUST & DECOUPLED RENTAL HISTORY FETCH
   const loadRentalHistory = async (customerIdToFetch) => {
-    // DEFENSIVE UI: Check if the service and method exist before calling.
     if (CustomerService && typeof CustomerService.getCustomerRentalHistory === 'function') {
       try {
         const rentalHistoryResult = await CustomerService.getCustomerRentalHistory(customerIdToFetch);
-        
         if (rentalHistoryResult.success) {
           setRentalHistory(rentalHistoryResult.data);
         } else {
-          // SILENT FAILURE: Log error but don't crash UI.
           console.warn('Could not fetch rental history:', rentalHistoryResult.error);
-          setRentalHistory([]); // Default to empty list on failure.
+          setRentalHistory([]);
         }
       } catch (err) {
-        // SILENT FAILURE: Catch any unexpected errors during the fetch.
         console.error('❌ Unexpected error in loadRentalHistory:', err);
-        setRentalHistory([]); // Default to empty list.
+        setRentalHistory([]);
       }
     } else {
       console.error("CustomerService.getCustomerRentalHistory is not available.");
-      setRentalHistory([]); // Default to empty list if method is missing.
+      setRentalHistory([]);
     }
   };
   
@@ -145,17 +159,13 @@ const ViewCustomerDetailsDrawer = ({
         .from('customer-documents')
         .upload(fileName, file);
 
-      if (uploadError) {
-        throw uploadError;
-      }
+      if (uploadError) throw uploadError;
 
       const { data: publicUrlData } = supabase.storage
         .from('customer-documents')
         .getPublicUrl(fileName);
       
-      if (!publicUrlData) {
-        throw new Error('Could not get public URL for the uploaded file.');
-      }
+      if (!publicUrlData) throw new Error('Could not get public URL for the uploaded file.');
       
       const newImageUrl = publicUrlData.publicUrl;
       const currentImages = customerData.extra_images || [];
@@ -166,9 +176,7 @@ const ViewCustomerDetailsDrawer = ({
         .update({ extra_images: updatedImages })
         .eq('id', customerData.id);
 
-      if (dbError) {
-        throw dbError;
-      }
+      if (dbError) throw dbError;
       
       await loadCustomerData();
 
@@ -184,30 +192,29 @@ const ViewCustomerDetailsDrawer = ({
   };
 
   const handleCreateCustomerProfile = async () => {
-    if (!rental || !rental.id) return;
+    const sourceRental = rental || (rentalHistory.length > 0 ? rentalHistory[0] : null);
+    if (!sourceRental) {
+        setError("No rental data available to create a profile.");
+        return;
+    }
 
     setCreatingProfile(true);
     setError(null);
     setAlertMessage(null);
 
     try {
-      // Data from the rental record is used to create/find the customer.
       const customerToSave = {
-        full_name: rental.customer_name,
-        email: rental.customer_email || rental.email,
-        phone: rental.customer_phone || rental.phone,
-        licence_number: rental.licence_number || rental.customer_licence_number || null,
-        id_number: rental.id_number || rental.customer_id_number || null,
+        full_name: sourceRental.customer_name,
+        email: sourceRental.customer_email || sourceRental.email,
+        phone: sourceRental.customer_phone || sourceRental.phone,
+        licence_number: sourceRental.licence_number || sourceRental.customer_licence_number,
+        id_number: sourceRental.id_number || sourceRental.customer_id_number,
       };
 
       const result = await CustomerService.saveCustomer(customerToSave);
       
       if (result.success) {
-        if (result.isExisting) {
-          setAlertMessage(result.message);
-        } else {
-          setAlertMessage('Successfully created a new customer profile.');
-        }
+        setAlertMessage(result.message || (result.isExisting ? 'Found existing customer profile.' : 'Successfully created a new customer profile.'));
         await loadCustomerData();
       } else {
         setError(result.error || 'Failed to create or update customer profile.');
@@ -223,11 +230,7 @@ const ViewCustomerDetailsDrawer = ({
   const formatDate = (dateString) => {
     if (!dateString) return 'N/A';
     try {
-      return new Date(dateString).toLocaleDateString('en-US', {
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric'
-      });
+      return new Date(dateString).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
     } catch {
       return 'Invalid Date';
     }
@@ -236,13 +239,7 @@ const ViewCustomerDetailsDrawer = ({
   const formatDateTime = (dateString) => {
     if (!dateString) return 'N/A';
     try {
-      return new Date(dateString).toLocaleString('en-US', {
-        year: 'numeric',
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
+      return new Date(dateString).toLocaleString('en-US', { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
     } catch {
       return 'Invalid Date';
     }
@@ -265,10 +262,7 @@ const ViewCustomerDetailsDrawer = ({
               {customerData?.isRentalBased ? 'Limited Information Available' : 'Complete Customer Profile'}
             </p>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-gray-200 rounded-full transition-colors"
-          >
+          <button onClick={onClose} className="p-2 hover:bg-gray-200 rounded-full transition-colors">
             <X className="h-5 w-5 text-gray-500" />
           </button>
         </div>
@@ -284,20 +278,14 @@ const ViewCustomerDetailsDrawer = ({
 
           {alertMessage && (
             <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <div className="flex items-center">
-                <CheckCircle className="h-5 w-5 text-blue-400" />
-                <span className="ml-2 text-blue-800 font-medium">Notification</span>
-              </div>
+              <div className="flex items-center"><CheckCircle className="h-5 w-5 text-blue-400" /><span className="ml-2 text-blue-800 font-medium">Notification</span></div>
               <p className="text-blue-700 mt-1">{alertMessage}</p>
             </div>
           )}
 
           {error && (
             <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-              <div className="flex items-center">
-                <AlertCircle className="h-5 w-5 text-red-400" />
-                <span className="ml-2 text-red-800 font-medium">Error</span>
-              </div>
+              <div className="flex items-center"><AlertCircle className="h-5 w-5 text-red-400" /><span className="ml-2 text-red-800 font-medium">Error</span></div>
               <p className="text-red-700 mt-1">{error}</p>
             </div>
           )}
@@ -307,35 +295,17 @@ const ViewCustomerDetailsDrawer = ({
               {customerData.isRentalBased ? (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center">
-                      <AlertCircle className="h-5 w-5 text-yellow-400" />
-                      <span className="ml-2 text-yellow-800 font-medium">Limited Information</span>
-                    </div>
-                    <button
-                      onClick={handleCreateCustomerProfile}
-                      disabled={creatingProfile}
-                      className="inline-flex items-center px-3 py-1 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors disabled:opacity-50"
-                    >
-                      {creatingProfile ? (
-                        <><div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-600 mr-1"></div>Creating...</>
-                      ) : (
-                        <><Plus className="h-3 w-3 mr-1" />Create Profile</>
-                      )}
+                    <div className="flex items-center"><AlertCircle className="h-5 w-5 text-yellow-400" /><span className="ml-2 text-yellow-800 font-medium">Limited Information</span></div>
+                    <button onClick={handleCreateCustomerProfile} disabled={creatingProfile} className="inline-flex items-center px-3 py-1 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors disabled:opacity-50">
+                      {creatingProfile ? (<><div className="animate-spin rounded-full h-3 w-3 border-b-2 border-blue-600 mr-1"></div>Creating...</>) : (<><Plus className="h-3 w-3 mr-1" />Create Profile</>)}
                     </button>
                   </div>
-                  <p className="text-yellow-700 mt-2 text-sm">
-                    This customer doesn't have a complete profile yet. Data shown is from rental records only.
-                  </p>
+                  <p className="text-yellow-700 mt-2 text-sm">This customer doesn't have a complete profile yet. Data shown is from rental records only.</p>
                 </div>
               ) : (
                 <div className="bg-green-50 border border-green-200 rounded-lg p-4">
-                  <div className="flex items-center">
-                    <CheckCircle className="h-5 w-5 text-green-400" />
-                    <span className="ml-2 text-green-800 font-medium">Complete Profile</span>
-                  </div>
-                  <p className="text-green-700 mt-1 text-sm">
-                    This customer has a complete profile with ID verification.
-                  </p>
+                  <div className="flex items-center"><CheckCircle className="h-5 w-5 text-green-400" /><span className="ml-2 text-green-800 font-medium">Complete Profile</span></div>
+                  <p className="text-green-700 mt-1 text-sm">This customer has a complete profile.</p>
                 </div>
               )}
 
@@ -343,90 +313,50 @@ const ViewCustomerDetailsDrawer = ({
               <div className="bg-gray-50 rounded-lg p-4">
                 <h3 className="text-sm font-medium text-gray-900 mb-3 flex items-center"><User className="h-4 w-4 mr-2 text-blue-600" />Contact Information</h3>
                 <div className="space-y-3">
-                  <div className="flex items-center">
-                    <span className="text-sm text-gray-500 w-20">Name:</span>
-                    <span className="text-sm font-medium text-gray-900">{customerData.full_name || customerData.customer_name || 'N/A'}</span>
-                  </div>
-                  <div className="flex items-center">
-                    <Mail className="h-4 w-4 text-gray-400 mr-2" /><span className="text-sm text-gray-500 w-16">Email:</span>
-                    <span className="text-sm text-gray-900">{customerData.email || 'N/A'}</span>
-                  </div>
-                  <div className="flex items-center">
-                    <Phone className="h-4 w-4 text-gray-400 mr-2" /><span className="text-sm text-gray-500 w-16">Phone:</span>
-                    <span className="text-sm text-gray-900">{customerData.phone || 'N/A'}</span>
-                  </div>
-                   <div className="flex items-start">
-                    <MapPin className="h-4 w-4 text-gray-400 mr-2 mt-1" /><span className="text-sm text-gray-500 w-16">Address:</span>
-                    <span className="text-sm text-gray-900 flex-1">{customerData.address || 'N/A'}</span>
-                  </div>
+                  <div className="flex items-center"><span className="text-sm text-gray-500 w-20">Name:</span><span className="text-sm font-medium text-gray-900">{customerData?.full_name ?? 'N/A'}</span></div>
+                  <div className="flex items-center"><Mail className="h-4 w-4 text-gray-400 mr-2" /><span className="text-sm text-gray-500 w-16">Email:</span><span className="text-sm text-gray-900">{customerData?.email ?? 'N/A'}</span></div>
+                  <div className="flex items-center"><Phone className="h-4 w-4 text-gray-400 mr-2" /><span className="text-sm text-gray-500 w-16">Phone:</span><span className="text-sm text-gray-900">{customerData?.phone ?? 'N/A'}</span></div>
+                  <div className="flex items-center"><CreditCard className="h-4 w-4 text-gray-400 mr-2" /><span className="text-sm text-gray-500 w-16">License:</span><span className="text-sm text-gray-900">{customerData?.licence_number ?? 'N/A'}</span></div>
                 </div>
               </div>
 
               {/* Rental History */}
               <div className="bg-gray-50 rounded-lg p-4">
-                <h3 className="text-sm font-medium text-gray-900 mb-3 flex items-center"><Clock className="h-4 w-4 mr-2 text-blue-600" />Rental History</h3>
+                <h3 className="text-sm font-medium text-gray-900 mb-3 flex items-center"><Clock className="h-4 w-4 mr-2 text-blue-600" />Rental History ({rentalHistory.length})</h3>
                 {rentalHistory.length > 0 ? (
                   <div className="space-y-3 max-h-60 overflow-y-auto">
                     {rentalHistory.map(r => (
                       <Link to={`/admin/rentals/${r.id}`} key={r.id} className="block p-3 bg-white rounded-lg border hover:bg-gray-100">
                         <div className="flex justify-between items-center">
                           <p className="font-semibold text-sm">{r.vehicle?.name || 'Unknown Vehicle'}</p>
-                          <span className={`text-xs px-2 py-0.5 rounded-full ${
-                            r.rental_status === 'completed' ? 'bg-blue-100 text-blue-800' :
-                            r.rental_status === 'active' ? 'bg-green-100 text-green-800' :
-                            'bg-gray-100 text-gray-800'
-                          }`}>{r.rental_status}</span>
+                          <span className={`text-xs px-2 py-0.5 rounded-full ${r.rental_status === 'completed' ? 'bg-blue-100 text-blue-800' : r.rental_status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>{r.rental_status}</span>
                         </div>
                         <p className="text-xs text-gray-500">{formatDate(r.rental_start_date)} - {formatDate(r.rental_end_date)}</p>
                       </Link>
                     ))}
                   </div>
-                ) : (
-                  <p className="text-sm text-gray-500">No rental history found.</p>
-                )}
+                ) : (<p className="text-sm text-gray-500">No rental history found.</p>)}
               </div>
 
-              {/* ID Document Scan */}
+              {/* ID Document Scans */}
               <div className="bg-gray-50 rounded-lg p-4">
-                <h3 className="text-sm font-medium text-gray-900 mb-3 flex items-center"><Camera className="h-4 w-4 mr-2 text-blue-600" />ID Document Scan</h3>
-                {idScanUrl ? (
-                  <img src={idScanUrl} alt="ID Scan" className="w-full h-48 object-contain border rounded-lg cursor-pointer" onClick={() => window.open(idScanUrl, '_blank')} />
-                ) : (
-                  <p className="text-sm text-gray-500">No ID document scan available.</p>
-                )}
+                <h3 className="text-sm font-medium text-gray-900 mb-3 flex items-center"><Camera className="h-4 w-4 mr-2 text-blue-600" />ID Scans</h3>
+                {idScanUrl && <img src={idScanUrl} alt="ID Scan" className="w-full h-48 object-contain border rounded-lg cursor-pointer mb-2" onClick={() => window.open(idScanUrl, '_blank')} />}
+                {customerIdImage && <img src={customerIdImage} alt="ID Document" className="w-full h-48 object-contain border rounded-lg cursor-pointer" onClick={() => window.open(customerIdImage, '_blank')} />}
+                {!idScanUrl && !customerIdImage && <p className="text-sm text-gray-500">No ID documents available.</p>}
               </div>
               
-              {/* ID Document */}
-              <div className="bg-gray-50 rounded-lg p-4">
-                <h3 className="text-sm font-medium text-gray-900 mb-3 flex items-center"><Camera className="h-4 w-4 mr-2 text-blue-600" />ID Document</h3>
-                {customerIdImage ? (
-                  <img src={customerIdImage} alt="ID Document" className="w-full h-48 object-contain border rounded-lg cursor-pointer" onClick={() => window.open(customerIdImage, '_blank')} />
-                ) : (
-                  <p className="text-sm text-gray-500">No ID document available.</p>
-                )}
-              </div>
-
               {/* Additional Documents */}
               {!customerData.isRentalBased && (
                 <div className="bg-gray-50 rounded-lg p-4">
                   <h3 className="text-sm font-medium text-gray-900 mb-3 flex items-center"><FileText className="h-4 w-4 mr-2 text-blue-600" />Additional Documents</h3>
                   <div className="grid grid-cols-2 gap-4 mb-4">
-                    {extraImages.map((imgUrl, index) => (
-                      <div key={index} className="relative group">
-                        <img src={imgUrl} alt={`Extra doc ${index + 1}`} className="w-full h-24 object-cover border rounded-lg cursor-pointer" onClick={() => window.open(imgUrl, '_blank')} />
-                      </div>
-                    ))}
+                    {extraImages.map((imgUrl, index) => (<div key={index} className="relative group"><img src={imgUrl} alt={`Extra doc ${index + 1}`} className="w-full h-24 object-cover border rounded-lg cursor-pointer" onClick={() => window.open(imgUrl, '_blank')} /></div>))}
                   </div>
-                  
                   <div>
                     <label htmlFor="image-upload" className="w-full">
                       <div className="mt-2 flex justify-center px-6 py-4 border-2 border-gray-300 border-dashed rounded-md cursor-pointer hover:border-blue-500 bg-white">
-                        <div className="text-center">
-                          <Upload className="mx-auto h-8 w-8 text-gray-400" />
-                          <p className="mt-1 text-sm text-gray-600">
-                            {uploading ? 'Uploading...' : 'Click to upload a document'}
-                          </p>
-                        </div>
+                        <div className="text-center"><Upload className="mx-auto h-8 w-8 text-gray-400" /><p className="mt-1 text-sm text-gray-600">{uploading ? 'Uploading...' : 'Click to upload a document'}</p></div>
                       </div>
                       <input id="image-upload" name="image-upload" type="file" className="sr-only" onChange={handleImageUpload} disabled={uploading} ref={fileInputRef} accept="image/*,.pdf" />
                     </label>
@@ -440,14 +370,8 @@ const ViewCustomerDetailsDrawer = ({
               <div className="bg-gray-50 rounded-lg p-4">
                 <h3 className="text-sm font-medium text-gray-900 mb-3 flex items-center"><CreditCard className="h-4 w-4 mr-2 text-blue-600" />Account Information</h3>
                 <div className="space-y-3">
-                  <div className="flex items-center">
-                    <span className="text-sm text-gray-500 w-20">Customer ID:</span>
-                    <span className="text-sm font-mono text-gray-900">{customerData.id || 'N/A'}</span>
-                  </div>
-                  <div className="flex items-center">
-                    <span className="text-sm text-gray-500 w-20">Created:</span>
-                    <span className="text-sm text-gray-900">{formatDateTime(customerData.created_at)}</span>
-                  </div>
+                  <div className="flex items-center"><span className="text-sm text-gray-500 w-20">Customer ID:</span><span className="text-sm font-mono text-gray-900">{customerData.id ?? 'N/A'}</span></div>
+                  <div className="flex items-center"><span className="text-sm text-gray-500 w-20">Created:</span><span className="text-sm text-gray-900">{formatDateTime(customerData.created_at)}</span></div>
                 </div>
               </div>
             </>

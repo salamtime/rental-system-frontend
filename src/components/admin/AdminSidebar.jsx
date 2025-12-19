@@ -13,6 +13,25 @@ import AlertNotificationBadge from './AlertNotificationBadge';
 import MobileDrawer from '../navigation/MobileDrawer';
 import '../../styles/mobile-drawer.css';
 
+// STANDARDIZED MODULE NAMES - Source of Truth
+const STANDARD_MODULES = [
+  'Dashboard',
+  'Calendar',
+  'Tours & Bookings',
+  'Rental Management',
+  'Customer Management',
+  'Fleet Management',
+  'Pricing Management',
+  'Quad Maintenance',
+  'Fuel Logs',
+  'Inventory',
+  'Finance Management',
+  'Alerts',
+  'User & Role Management',
+  'System Settings',
+  'Project Export'
+];
+
 const AdminSidebar = () => {
   const location = useLocation();
   const navigate = useNavigate();
@@ -20,7 +39,7 @@ const AdminSidebar = () => {
   const { signOut } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isNavigating, setIsNavigating] = useState(false);
-  const [userModulePermissions, setUserModulePermissions] = useState({});
+  const [userPermissions, setUserPermissions] = useState({});
   
   const isActive = (path) => {
     return location.pathname === path;
@@ -30,105 +49,248 @@ const AdminSidebar = () => {
   const { userRoles } = useSelector(state => state.auth);
   const { user } = useAuth();
 
-  // Fetch user module permissions
+  // Fetch user permissions using RPC function
   useEffect(() => {
     const fetchUserPermissions = async () => {
-      if (!user?.email) return;
+      if (!user?.id) {
+        console.log('🔍 [AdminSidebar] No user ID available, skipping permission fetch');
+        return;
+      }
       
       try {
-        const APP_ID = 'b30c02e74da644baad4668e3587d86b1';
+        console.log('=== 🔍 [AdminSidebar] Fetching user permissions via RPC ===');
+        console.log('📋 User ID:', user.id);
+        console.log('📋 User Email:', user.email);
+        console.log('📋 User Role:', user.user_metadata?.role);
+        
+        // OWNER MASTER KEY: If user is owner, grant all permissions automatically
+        if (user.user_metadata?.role === 'owner') {
+          console.log('🔑 OWNER MASTER KEY ACTIVATED - Granting all permissions');
+          const ownerPermissions = {};
+          STANDARD_MODULES.forEach(module => {
+            ownerPermissions[module] = true;
+          });
+          console.log('✅ Owner permissions set:', ownerPermissions);
+          setUserPermissions(ownerPermissions);
+          return;
+        }
+        
+        // Check if user is authenticated
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+        
+        if (sessionError || !session) {
+          console.warn('⚠️ No valid session, skipping permission fetch');
+          return;
+        }
+        
+        console.log('📡 Calling RPC: get_user_effective_permissions');
+        console.log('📡 RPC Parameter: v_user_id =', user.id);
+        
+        // Call the RPC function with correct parameter name
         const { data, error } = await supabase
-          .from(`app_${APP_ID}_user_module_permissions`)
-          .select('module_name, has_access')
-          .eq('user_email', user.email);
+          .rpc('get_user_effective_permissions', { v_user_id: user.id });
+
+        console.log('📥 RPC Response - typeof data:', typeof data);
+        console.log('📥 RPC Response - Array.isArray(data):', Array.isArray(data));
+        console.log('📥 RPC Response - data length:', data?.length);
+        console.log('📥 RPC Response - Raw Data (full):', JSON.stringify(data, null, 2));
+        
+        if (data && data.length > 0) {
+          console.log('📥 First item structure:', JSON.stringify(data[0], null, 2));
+          console.log('📥 First item keys:', Object.keys(data[0]));
+        }
+        
+        console.log('📥 RPC Response - Error:', error);
 
         if (error) {
-          console.error('Error fetching user permissions:', error);
+          console.error('❌ Error fetching user permissions via RPC:', error);
+          // Don't throw, just return - let the component handle empty permissions
           return;
         }
 
-        // Create permissions map
+        // Map the results: convert array to object { module_name: is_allowed }
+        console.log('🔄 Starting to build permissions map...');
         const permissionsMap = {};
-        data?.forEach(perm => {
-          permissionsMap[perm.module_name] = perm.has_access;
+        
+        data?.forEach((item, index) => {
+          console.log(`  [${index}] Processing item:`, JSON.stringify(item, null, 2));
+          console.log(`  [${index}] module_name: "${item.module_name}" (type: ${typeof item.module_name})`);
+          console.log(`  [${index}] is_allowed: ${item.is_allowed} (type: ${typeof item.is_allowed})`);
+          
+          permissionsMap[item.module_name] = item.is_allowed;
+          
+          console.log(`  [${index}] Added to map: permissionsMap["${item.module_name}"] = ${item.is_allowed}`);
         });
 
-        setUserModulePermissions(permissionsMap);
+        console.log('🗺️ Permissions Map (after building):', JSON.stringify(permissionsMap, null, 2));
+        console.log('🗺️ Permissions Map keys:', Object.keys(permissionsMap));
+        console.log('🗺️ Permissions Map values:', Object.values(permissionsMap));
+        console.log('📊 Total modules in map:', Object.keys(permissionsMap).length);
+        console.log('📊 Total modules with access (true):', Object.values(permissionsMap).filter(v => v === true).length);
+        
+        console.log('💾 Setting userPermissions state with:', permissionsMap);
+        setUserPermissions(permissionsMap);
+        
+        console.log('=== ✅ [AdminSidebar] Permission fetch complete ===');
       } catch (error) {
-        console.error('Error fetching user permissions:', error);
+        console.error('❌ Error in fetchUserPermissions:', error);
+        console.error('❌ Error stack:', error.stack);
+        // Don't throw, just log - let the component handle empty permissions
       }
     };
 
     fetchUserPermissions();
-  }, [user?.email]);
+  }, [user?.id, user?.email, user?.user_metadata?.role]);
+
+  // Real-time Updates: Listen for permission changes
+  useEffect(() => {
+    if (!user?.id) return;
+    
+    // Skip real-time updates for owner - they always have full access
+    if (user.user_metadata?.role === 'owner') {
+      console.log('👑 Owner user - skipping real-time permission updates');
+      return;
+    }
+
+    console.log('🔔 Setting up real-time subscription for user:', user.id);
+    
+    const channel = supabase
+      .channel('user_permissions_changes')
+      .on('postgres_changes', {
+        event: 'UPDATE',
+        schema: 'public',
+        table: 'app_b30c02e74da644baad4668e3587d86b1_users',
+        filter: `id=eq.${user.id}`
+      }, async (payload) => {
+        console.log('🔔 Permissions updated in real-time');
+        console.log('📦 Payload:', payload);
+        
+        // Check if user is still authenticated before re-fetching
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) {
+          console.warn('⚠️ No valid session, skipping real-time permission update');
+          return;
+        }
+        
+        // Re-fetch permissions using RPC
+        const { data, error } = await supabase
+          .rpc('get_user_effective_permissions', { v_user_id: user.id });
+        
+        if (!error && data) {
+          const permissionsMap = {};
+          data.forEach(item => {
+            permissionsMap[item.module_name] = item.is_allowed;
+          });
+          console.log('🔄 Updated permissions map:', permissionsMap);
+          setUserPermissions(permissionsMap);
+        }
+      })
+      .subscribe();
+
+    return () => {
+      console.log('🧹 Cleaning up real-time subscription');
+      supabase.removeChannel(channel);
+    };
+  }, [user?.id, user?.user_metadata?.role]);
   
-  // Check if user has access to a specific module
-  const hasModuleAccess = useCallback((moduleId) => {
-    // Check individual permission first
-    if (userModulePermissions.hasOwnProperty(moduleId)) {
-      return userModulePermissions[moduleId];
+  // Check if user has access to a specific module with case-insensitive comparison
+  const hasModuleAccess = useCallback((moduleName) => {
+    console.log(`\n🔍 === hasModuleAccess called for: "${moduleName}" ===`);
+    console.log('📊 Current userPermissions object:', JSON.stringify(userPermissions, null, 2));
+    console.log('📊 userPermissions keys:', Object.keys(userPermissions));
+    console.log('📊 Total keys in userPermissions:', Object.keys(userPermissions).length);
+    
+    // OWNER MASTER KEY: Owners always have access
+    if (user?.user_metadata?.role === 'owner') {
+      console.log(`  ✅ Owner access granted for: "${moduleName}"`);
+      return true;
     }
     
-    // Fall back to role-based access
-    const currentRole = userRoles?.[0] || 'user';
-    return getRoleBasedAccess(currentRole, moduleId);
-  }, [userModulePermissions, userRoles]);
+    // Normalize module name for comparison (trim and lowercase)
+    const normalizedModuleName = moduleName.trim().toLowerCase();
+    console.log(`  🔄 Normalized module name: "${normalizedModuleName}"`);
+    
+    // Check if any permission key matches (case-insensitive)
+    console.log('  🔍 Checking all permission keys...');
+    for (const [key, value] of Object.entries(userPermissions)) {
+      const normalizedKey = key.trim().toLowerCase();
+      console.log(`    Comparing: "${normalizedKey}" === "${normalizedModuleName}" ? ${normalizedKey === normalizedModuleName}`);
+      console.log(`    Value: ${value} (type: ${typeof value})`);
+      
+      if (normalizedKey === normalizedModuleName) {
+        if (value === true) {
+          console.log(`  ✅ Access GRANTED for: "${moduleName}" (key: "${key}", value: ${value})`);
+          return true;
+        } else {
+          console.log(`  ❌ Access DENIED for: "${moduleName}" (key: "${key}", value: ${value})`);
+          return false;
+        }
+      }
+    }
+    
+    console.log(`  ❌ Access DENIED for: "${moduleName}" (no matching key found)`);
+    return false;
+  }, [userPermissions, user?.user_metadata?.role]);
 
-  // Role-based access fallback
-  const getRoleBasedAccess = (role, moduleId) => {
-    const rolePermissions = {
-      owner: [
-        'Dashboard', 'Tours & Booking', 'Booking Management', 'Fleet Management',
-        'Quad Maintenance', 'Fuel Records', 'Inventory', 'Finance Management',
-        'User & Role Management', 'System Settings', 'Alerts', 'Pricing Management'
-      ],
-      admin: [
-        'Dashboard', 'Tours & Booking', 'Booking Management', 'Fleet Management',
-        'Quad Maintenance', 'Fuel Records', 'Inventory', 'Finance Management', 'Alerts', 'Pricing Management'
-      ],
-      guide: [
-        'Dashboard', 'Tours & Booking', 'Fuel Records', 'Quad Maintenance'
-      ],
-      employee: [
-        'Dashboard', 'Fleet Management', 'Quad Maintenance', 'Fuel Records', 'Inventory'
-      ]
-    };
-
-    return rolePermissions[role]?.includes(moduleId) || false;
-  };
-
-  // Define navigation items with module IDs
+  // Define navigation items with standardized module names
   const getAllNavigationItems = () => {
     return [
-      { name: 'Dashboard Overview', href: '/admin/dashboard', icon: HomeIcon, moduleId: 'Dashboard' },
-      { name: 'Calendar', href: '/admin/calendar', icon: CalendarIcon, moduleId: 'Dashboard' },
-      { name: 'Tours & Bookings', href: '/admin/tours', icon: CompassIcon, moduleId: 'Tours & Booking' },
-      { name: 'Rental Management', href: '/admin/rentals', icon: TruckIcon, moduleId: 'Fleet Management' },
-      { name: 'Fleet Management', href: '/admin/fleet', icon: TruckIcon, moduleId: 'Fleet Management' },
-      { name: 'Pricing Management', href: '/admin/pricing', icon: DollarSignIcon, moduleId: 'Pricing Management' },
-      { name: 'Quad Maintenance', href: '/admin/maintenance', icon: SettingsIcon, moduleId: 'Quad Maintenance' },
-      { name: 'Fuel Logs', href: '/admin/fuel', icon: DropletIcon, moduleId: 'Fuel Records' },
-      { name: 'Inventory', href: '/admin/inventory', icon: MapIcon, moduleId: 'Inventory' },
-      { name: 'Finance Management', href: '/admin/finance', icon: UsersIcon, moduleId: 'Finance Management' },
+      { name: 'Dashboard Overview', href: '/admin/dashboard', icon: HomeIcon, moduleName: 'Dashboard' },
+      { name: 'Calendar', href: '/admin/calendar', icon: CalendarIcon, moduleName: 'Calendar' },
+      { name: 'Tours & Bookings', href: '/admin/tours', icon: CompassIcon, moduleName: 'Tours & Bookings' },
+      { name: 'Rental Management', href: '/admin/rentals', icon: TruckIcon, moduleName: 'Rental Management' },
+      { name: 'Customer Management', href: '/admin/customers', icon: UsersIcon, moduleName: 'Customer Management' },
+      { name: 'Fleet Management', href: '/admin/fleet', icon: TruckIcon, moduleName: 'Fleet Management' },
+      { name: 'Pricing Management', href: '/admin/pricing', icon: DollarSignIcon, moduleName: 'Pricing Management' },
+      { name: 'Quad Maintenance', href: '/admin/maintenance', icon: SettingsIcon, moduleName: 'Quad Maintenance' },
+      { name: 'Fuel Logs', href: '/admin/fuel', icon: DropletIcon, moduleName: 'Fuel Logs' },
+      { name: 'Inventory', href: '/admin/inventory', icon: MapIcon, moduleName: 'Inventory' },
+      { name: 'Finance Management', href: '/admin/finance', icon: UsersIcon, moduleName: 'Finance Management' },
       { 
         name: 'Alerts', 
         href: '/admin/alerts', 
         icon: ({ className }) => <AlertNotificationBadge className={className} />, 
-        moduleId: 'Alerts' 
+        moduleName: 'Alerts' 
       },
-      { name: 'User & Role Management', href: '/admin/users', icon: UsersIcon, moduleId: 'User & Role Management' },
-      { name: 'System Settings', href: '/admin/settings', icon: SettingsIcon, moduleId: 'System Settings' },
-      { name: 'Project Export', href: '/admin/system-settings', icon: SettingsIcon, moduleId: 'System Settings' },
+      { name: 'User & Role Management', href: '/admin/users', icon: UsersIcon, moduleName: 'User & Role Management' },
+      { name: 'System Settings', href: '/admin/settings', icon: SettingsIcon, moduleName: 'System Settings' },
+      { name: 'Project Export', href: '/admin/system-settings', icon: SettingsIcon, moduleName: 'Project Export' },
     ];
   };
 
-  // Filter navigation based on individual permissions
+  // Filter navigation based on permissions
   const getFilteredNavigation = () => {
+    console.log('\n🔍 === getFilteredNavigation called ===');
+    console.log('🔍 PERMISSIONS MAP FINAL (at filter time):', JSON.stringify(userPermissions, null, 2));
+    console.log('📊 userPermissions keys:', Object.keys(userPermissions));
+    console.log('📊 Total keys:', Object.keys(userPermissions).length);
+    
     const allItems = getAllNavigationItems();
-    return allItems.filter(item => hasModuleAccess(item.moduleId));
+    console.log('📋 Total navigation items to filter:', allItems.length);
+    
+    const filtered = allItems.filter((item, index) => {
+      console.log(`\n[${index}] === Filtering item ===`);
+      console.log(`[${index}] Display Name: "${item.name}"`);
+      console.log(`[${index}] Module Name: "${item.moduleName}"`);
+      console.log(`[${index}] Href: "${item.href}"`);
+      
+      const hasAccess = hasModuleAccess(item.moduleName);
+      
+      console.log(`[${index}] Result: ${hasAccess ? '✅ INCLUDED' : '❌ EXCLUDED'}`);
+      return hasAccess;
+    });
+    
+    console.log(`\n✅ Filtered navigation items: ${filtered.length} of ${allItems.length}`);
+    console.log('📋 Visible modules:', filtered.map(item => item.moduleName));
+    console.log('=== End getFilteredNavigation ===\n');
+    
+    return filtered;
   };
 
   const navigation = getFilteredNavigation();
+  
+  console.log('🎯 Final navigation array length:', navigation.length);
+  console.log('🎯 Final navigation items:', navigation.map(item => item.name));
 
   // Convert navigation items to MobileDrawer format
   const getMobileNavItems = () => {
@@ -151,6 +313,7 @@ const AdminSidebar = () => {
       'Calendar': '📅',
       'Tours & Bookings': '🗺️',
       'Rental Management': '📋',
+      'Customer Management': '👥',
       'Fleet Management': '🚗',
       'Pricing Management': '💰',
       'Quad Maintenance': '🛠️',
@@ -183,7 +346,7 @@ const AdminSidebar = () => {
 
   return (
     <>
-      {/* Desktop Sidebar - unchanged */}
+      {/* Desktop Sidebar */}
       <aside className="w-64 flex-shrink-0 bg-white border-r border-gray-200 hidden md:block">
         <div className="h-16 border-b border-gray-200 flex items-center px-4">
           <Link to="/" className="text-blue-600 font-semibold text-lg">
@@ -255,7 +418,7 @@ const AdminSidebar = () => {
         </button>
       </div>
       
-      {/* Drop-In MobileDrawer - User's Proven Solution */}
+      {/* Drop-In MobileDrawer */}
       <MobileDrawer
         open={mobileMenuOpen}
         onClose={() => setMobileMenuOpen(false)}

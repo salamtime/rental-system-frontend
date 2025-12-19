@@ -4,16 +4,20 @@ import { supabase } from '../utils/supabaseClient';
 
 export const AVAILABLE_MODULES = [
   'Dashboard',
-  'Tours & Booking', 
-  'Booking Management',
+  'Calendar',
+  'Tours & Bookings',
+  'Rental Management',
+  'Customer Management',
   'Fleet Management',
   'Quad Maintenance',
-  'Fuel Records',
+  'Fuel Logs',
   'Inventory',
   'Finance Management',
   'Alerts',
   'User & Role Management',
-  'System Settings'
+  'Reports',
+  'System Settings',
+  'Activity Log'
 ];
 
 export const useModulePermissions = (userId = null) => {

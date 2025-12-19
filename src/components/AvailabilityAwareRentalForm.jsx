@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import TransactionalRentalService from '../services/TransactionalRentalService';
 import SmartVehicleSelector from './SmartVehicleSelector';
 import SmartDatePicker from './SmartDatePicker';
@@ -7,8 +7,9 @@ import AppSettingsService from '../services/AppSettingsService';
 import EnhancedUnifiedIDScanModal from './customers/EnhancedUnifiedIDScanModal';
 import enhancedUnifiedCustomerService from '../services/EnhancedUnifiedCustomerService';
 import { supabase } from '../lib/supabase';
-import { DollarSign, Calculator, Info, AlertCircle, CheckCircle, Loader, Clock, Scan, RefreshCw, Shield, CalendarX, UserPlus } from 'lucide-react';
+import { DollarSign, Calculator, Info, AlertCircle, CheckCircle, Loader, Clock, Scan, RefreshCw, Shield, CalendarX, UserPlus, UserSearch } from 'lucide-react';
 import { getMoroccoTodayString, getMoroccoDateOffset, getMoroccoHourlyTimes, isAfter, parseDateAsLocal, formatDateToYYYYMMDD } from '../utils/moroccoTime';
+import { debounce } from 'lodash';
 
 const AvailabilityAwareRentalForm = ({ 
   onSuccess, 
@@ -76,7 +77,33 @@ const AvailabilityAwareRentalForm = ({
   const [showIDScanModal, setShowIDScanModal] = useState(false);
   const isManualStatusChange = useRef(false);
 
+  const [customers, setCustomers] = useState([]);
+  const [rentals, setRentals] = useState([]);
+  const [isPhoneDirty, setIsPhoneDirty] = useState(false);
+  const [isEmailDirty, setIsEmailDirty] = useState(false);
+
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const customerSearchRef = useRef(null);
+  const isProgrammaticChange = useRef(false);
+
   useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [customersResponse, rentalsResponse] = await Promise.all([
+          supabase.from('app_4c3a7a6153_customers').select('*'),
+          supabase.from('app_4c3a7a6153_rentals').select('*').order('created_at', { ascending: false }),
+        ]);
+
+        if (customersResponse.data) setCustomers(customersResponse.data);
+        if (rentalsResponse.data) setRentals(rentalsResponse.data);
+        console.log('[Auto-Populate] Fetched initial customer and rental data.');
+      } catch (err) {
+        console.error("Failed to fetch initial data for auto-population", err);
+      }
+    };
+
+    fetchData();
     loadVehicleModels();
     loadTransportFees();
     if (mode === 'create') {
@@ -88,6 +115,18 @@ const AvailabilityAwareRentalForm = ({
       }));
     }
   }, [mode]);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (customerSearchRef.current && !customerSearchRef.current.contains(event.target)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   useEffect(() => {
     if (initialData && mode === 'edit') {
@@ -279,6 +318,65 @@ const AvailabilityAwareRentalForm = ({
       handleQuickHourSelect(1);
     }
   }, [formData.rental_start_time, formData.rental_type]);
+
+  const getAggregatedCustomerData = useCallback(() => {
+    const customerMap = new Map();
+    customers.forEach(c => {
+        if (c.full_name) {
+            const key = c.full_name.trim().toLowerCase();
+            if (!customerMap.has(key)) {
+                customerMap.set(key, {
+                    id: c.id,
+                    name: c.full_name,
+                    email: c.email,
+                    phone: c.phone,
+                    licence_number: c.licence_number,
+                    source: 'customer'
+                });
+            }
+        }
+    });
+    rentals.forEach(r => {
+        if (r.customer_name) {
+            const key = r.customer_name.trim().toLowerCase();
+            const existing = customerMap.get(key);
+            if (existing) {
+                if (!existing.email && r.customer_email) existing.email = r.customer_email;
+                if (!existing.phone && r.customer_phone) existing.phone = r.customer_phone;
+                if (!existing.licence_number && r.customer_licence_number) existing.licence_number = r.customer_licence_number;
+            } else {
+                customerMap.set(key, {
+                    id: r.customer_id,
+                    name: r.customer_name,
+                    email: r.customer_email,
+                    phone: r.customer_phone,
+                    licence_number: r.customer_licence_number,
+                    source: 'rental'
+                });
+            }
+        }
+    });
+    return Array.from(customerMap.values());
+  }, [customers, rentals]);
+
+  useEffect(() => {
+      if (isProgrammaticChange.current && formData.customer_name) {
+          const customerData = getAggregatedCustomerData();
+          const searchName = formData.customer_name.trim().toLowerCase();
+          const match = customerData.find(c => c.name.trim().toLowerCase() === searchName);
+
+          if (match) {
+              console.log('🤖 Found automatic match for customer:', match);
+              setFormData(prev => ({
+                  ...prev,
+                  customer_email: prev.customer_email || match.email || '',
+                  customer_phone: prev.customer_phone || match.phone || '',
+                  customer_id: prev.customer_id || match.id || null,
+              }));
+          }
+          isProgrammaticChange.current = false;
+      }
+  }, [formData.customer_name, getAggregatedCustomerData]);
 
   const loadVehicleModels = async () => {
     try {
@@ -488,6 +586,23 @@ const AvailabilityAwareRentalForm = ({
     }));
   };
 
+  const handleSuggestionClick = (suggestion) => {
+    console.log('--- DEBUG: SELECTED CUSTOMER OBJECT ---');
+    console.log(JSON.stringify(suggestion, null, 2));
+    console.log('------------------------------------');
+    isProgrammaticChange.current = false;
+    setFormData(prev => ({
+        ...prev,
+        customer_name: suggestion.name,
+        customer_email: !isEmailDirty ? suggestion.email || '' : prev.customer_email,
+        customer_phone: !isPhoneDirty ? suggestion.phone || '' : prev.customer_phone,
+        customer_licence_number: suggestion.licence_number || '',
+        customer_id: suggestion.id || null,
+    }));
+    setSuggestions([]);
+    setShowSuggestions(false);
+  };
+
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
     
@@ -495,6 +610,29 @@ const AvailabilityAwareRentalForm = ({
 
     if (name === 'payment_status') {
       isManualStatusChange.current = true;
+    }
+
+    if (name === 'customer_phone') setIsPhoneDirty(true);
+    if (name === 'customer_email') setIsEmailDirty(true);
+
+    if (name === 'customer_name') {
+        isProgrammaticChange.current = false;
+        setFormData(prev => ({ ...prev, customer_name: value }));
+
+        if (value.length >= 2) {
+            const customerData = getAggregatedCustomerData();
+            const trimmedName = value.trim().toLowerCase();
+            const filteredSuggestions = customerData.filter(suggestion => 
+                suggestion.name.trim().toLowerCase().includes(trimmedName)
+            );
+
+            setSuggestions(filteredSuggestions);
+            setShowSuggestions(filteredSuggestions.length > 0);
+        } else {
+            setSuggestions([]);
+            setShowSuggestions(false);
+        }
+        return;
     }
 
     if (error) {
@@ -742,7 +880,7 @@ const AvailabilityAwareRentalForm = ({
           console.warn('⚠️ Could not fetch complete customer data, using saved data');
         }
       }
-      
+      isProgrammaticChange.current = true;
       setFormData(prev => ({
         ...prev,
         customer_name: customerData.full_name || customerData.customer_name || customerData.raw_name || prev.customer_name,
@@ -1302,7 +1440,7 @@ const AvailabilityAwareRentalForm = ({
             </div>
             
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
+              <div className="relative" ref={customerSearchRef}>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Customer Name *
                 </label>
@@ -1311,10 +1449,32 @@ const AvailabilityAwareRentalForm = ({
                   name="customer_name"
                   value={formData.customer_name || ""}
                   onChange={handleChange}
+                  autoComplete="off"
                   className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                   required
                   disabled={loading}
                 />
+                {showSuggestions && suggestions.length > 0 && (
+                  <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                    <ul>
+                      {suggestions.map((suggestion, index) => (
+                        <li
+                          key={index}
+                          onClick={() => handleSuggestionClick(suggestion)}
+                          className="px-4 py-2 cursor-pointer hover:bg-blue-50"
+                        >
+                          <div className="flex items-center">
+                            <UserSearch className="h-4 w-4 mr-2 text-gray-500" />
+                            <div>
+                                <p className="font-medium text-gray-800">{suggestion.name}</p>
+                                <p className="text-sm text-gray-500">{suggestion.phone} - {suggestion.email}</p>
+                            </div>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
 
               <div>

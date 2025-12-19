@@ -11,6 +11,7 @@ import RentalVideos from '../../components/RentalVideos';
 import ViewCustomerDetailsDrawer from '../../components/admin/ViewCustomerDetailsDrawer';
 import RentalContract from '../../components/admin/RentalContract'; // Import the contract component
 import SignaturePadModal from '../../components/SignaturePadModal'; // Import the signature modal
+import SecondDriverDetailsModal from '../../components/admin/SecondDriverDetailsModal';
 import { useReactToPrint } from 'react-to-print';
 import { getPaymentStatusStyle } from '../../config/statusColors';
 import { 
@@ -28,6 +29,7 @@ import {
   PlayCircle,
   Maximize2,
   User,
+  Users,
   CreditCard,
   FileSignature
 } from 'lucide-react';
@@ -48,6 +50,7 @@ export default function RentalDetails() {
   
   const [openingModalOpen, setOpeningModalOpen] = useState(false);
   const [closingModalOpen, setClosingModalOpen] = useState(false);
+  const [secondDriverModalOpen, setSecondDriverModalOpen] = useState(false);
   
   const [capturedFiles, setCapturedFiles] = useState([]);
   
@@ -162,7 +165,7 @@ export default function RentalDetails() {
       const invoiceUrlWithCacheBust = `${invoiceUrl}${cacheBuster}`;
       const videoUrlWithCacheBust = videoUrl !== 'Not available' ? `${videoUrl}${cacheBuster}` : 'Not available';
 
-      const message = `Hello ${rental.customer_name},\n\nPlease find your rental documents below:\n\nInvoice: ${invoiceUrlWithCacheBust}\nVehicle Video: ${videoUrlWithCacheBust}\n\nThank you for choosing our service!`;
+      const message = `Hello ${rental.customer_name},\\n\\nPlease find your rental documents below:\\n\\nInvoice: ${invoiceUrlWithCacheBust}\\nVehicle Video: ${videoUrlWithCacheBust}\\n\\nThank you for choosing our service!`;
       
       const encodedMessage = encodeURIComponent(message);
       const whatsappUrl = `https://wa.me/${rental.customer_phone.replace(/[^0-9]/g, '')}?text=${encodedMessage}`;
@@ -605,6 +608,7 @@ export default function RentalDetails() {
   const isCompleted = rental.rental_status?.toLowerCase() === 'completed';
   const hasOpeningVideo = openingMedia.length > 0;
   const canStartRental = isPaymentSufficient();
+  const hasSecondDriver = rental?.second_driver_name || rental?.second_driver_license || rental?.second_driver_id_image;
 
   const formattedRentalForInvoice = {
     ...rental,
@@ -685,15 +689,19 @@ export default function RentalDetails() {
               <p><strong>ID/License:</strong> {'N/A'}</p>
             </div>
           </div>
-          {rental.second_driver_name && (
+          {hasSecondDriver && (
             <>
               <Separator />
               <div>
                 <h3 className="font-semibold mb-3 text-lg">Second Driver Details</h3>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 mt-2 text-sm sm:text-base">
-                  <p><strong>Full Name:</strong> {rental.second_driver_name}</p>
-                  <p><strong>License:</strong> {rental.second_driver_license || 'N/A'}</p>
+                  <p><strong>Full Name:</strong> {rental.second_driver_name || '—'}</p>
+                  <p><strong>License:</strong> {rental.second_driver_license || '—'}</p>
                 </div>
+                <Button onClick={() => setSecondDriverModalOpen(true)} size="sm" className="mt-4 bg-gray-100 text-gray-800 hover:bg-gray-200">
+                    <Users className="w-4 h-4 mr-2" />
+                    View Second Driver
+                </Button>
               </div>
             </>
           )}
@@ -840,6 +848,13 @@ export default function RentalDetails() {
         customerId={customerDetailsDrawer.customerId}
         rental={rental}
       />
+
+      <SecondDriverDetailsModal
+        isOpen={secondDriverModalOpen}
+        onClose={() => setSecondDriverModalOpen(false)}
+        rental={rental}
+      />
+
       <div style={{ position: 'absolute', left: '-9999px', top: 0 }}>
         <div ref={contractRef}>
             <RentalContract rental={rental} />

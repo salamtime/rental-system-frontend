@@ -351,6 +351,14 @@ const VehicleManagement: React.FC = () => {
         }));
       }
       
+      // Use next_oil_change_odometer from vehicle if available
+      if (vehicle.next_oil_change_odometer && !maintenanceFormData.next_oil_change_odometer) {
+        setMaintenanceFormData(prev => ({
+          ...prev,
+          next_oil_change_odometer: vehicle.next_oil_change_odometer?.toString() || ''
+        }));
+      }
+      
       // Use default interval of 500km
       setMaintenanceFormData(prev => ({
         ...prev,
@@ -768,6 +776,16 @@ const VehicleManagement: React.FC = () => {
           // In real implementation, save documents to storage and update vehicle record
         }
         
+        // CRITICAL: Trigger AlertService after successful save
+        if (sanitizedData.current_odometer && sanitizedData.next_oil_change_odometer) {
+          alertService.createOrUpdateOilChangeAlert(
+            editingVehicle.id.toString(),
+            sanitizedData.name,
+            sanitizedData.current_odometer,
+            sanitizedData.next_oil_change_odometer
+          );
+        }
+        
         alert('Vehicle updated successfully!');
       } else {
         const { data: newVehicle, error } = await supabase
@@ -787,6 +805,16 @@ const VehicleManagement: React.FC = () => {
 
         if (vehicleDocuments.length > 0 && newVehicle) {
           // In real implementation, save documents to storage and link to vehicle
+        }
+        
+        // CRITICAL: Trigger AlertService after successful save
+        if (newVehicle && sanitizedData.current_odometer && sanitizedData.next_oil_change_odometer) {
+          alertService.createOrUpdateOilChangeAlert(
+            newVehicle.id.toString(),
+            sanitizedData.name,
+            sanitizedData.current_odometer,
+            sanitizedData.next_oil_change_odometer
+          );
         }
         
         alert('Vehicle created successfully!');
@@ -1901,6 +1929,117 @@ const VehicleManagement: React.FC = () => {
                       onChange={(e) => setFormData({...formData, registration_expiry_date: e.target.value})}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                       disabled={!!viewingVehicle}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Fleet Information Section - WITH NEW FIELDS */}
+              <div className="bg-orange-50 rounded-lg p-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <Gauge className="w-5 h-5 text-orange-600" />
+                  <h3 className="text-lg font-semibold text-orange-900">Fleet Information</h3>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
+                      <Gauge className="w-4 h-4" />
+                      Current Odometer (km)
+                    </label>
+                    <input
+                      type="number"
+                      value={formData.current_odometer}
+                      onChange={(e) => setFormData({...formData, current_odometer: e.target.value})}
+                      placeholder="e.g., 15000"
+                      className="w-full p-2 border rounded-md"
+                      disabled={!!viewingVehicle}
+                      min="0"
+                      step="0.1"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
+                      <Clock className="w-4 h-4" />
+                      Engine Hours
+                    </label>
+                    <input
+                      type="number"
+                      value={formData.engine_hours}
+                      onChange={(e) => setFormData({...formData, engine_hours: e.target.value})}
+                      placeholder="e.g., 250.5"
+                      className="w-full p-2 border rounded-md"
+                      disabled={!!viewingVehicle}
+                      min="0"
+                      step="0.1"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
+                      <Calendar className="w-4 h-4" />
+                      Last Oil Change Date
+                    </label>
+                    <input
+                      type="date"
+                      value={formData.last_oil_change_date}
+                      onChange={(e) => setFormData({...formData, last_oil_change_date: e.target.value})}
+                      className="w-full p-2 border rounded-md"
+                      disabled={!!viewingVehicle}
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
+                      <Gauge className="w-4 h-4" />
+                      Last Oil Change Odometer (km)
+                    </label>
+                    <input
+                      type="number"
+                      value={formData.last_oil_change_odometer}
+                      onChange={(e) => setFormData({...formData, last_oil_change_odometer: e.target.value})}
+                      placeholder="e.g., 14500"
+                      className="w-full p-2 border rounded-md"
+                      disabled={!!viewingVehicle}
+                      min="0"
+                      step="0.1"
+                    />
+                  </div>
+                </div>
+
+                {/* NEW FIELDS: Next Oil Change Planning */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
+                      <Calendar className="w-4 h-4" />
+                      Next Oil Change Date
+                    </label>
+                    <input
+                      type="date"
+                      value={formData.next_oil_change_due}
+                      onChange={(e) => setFormData({...formData, next_oil_change_due: e.target.value})}
+                      className="w-full p-2 border rounded-md"
+                      disabled={!!viewingVehicle}
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-2">
+                      <Gauge className="w-4 h-4" />
+                      Next Oil Change Odometer (km)
+                    </label>
+                    <input
+                      type="number"
+                      value={formData.next_oil_change_odometer}
+                      onChange={(e) => setFormData({...formData, next_oil_change_odometer: e.target.value})}
+                      placeholder="e.g., 15000"
+                      className="w-full p-2 border rounded-md"
+                      disabled={!!viewingVehicle}
+                      min="0"
+                      step="0.1"
                     />
                   </div>
                 </div>

@@ -8,11 +8,10 @@ import {
   CheckCircle,
   Download,
 } from 'lucide-react';
-import { 
+import CustomerService, { 
   checkCustomerRentalHistory, 
   deleteCustomer, 
   deleteCustomers,
-  getCustomerRentalHistory,
 } from '../services/EnhancedUnifiedCustomerService.js';
 import ViewCustomerDetailsDrawer from './admin/ViewCustomerDetailsDrawer';
 
@@ -93,77 +92,59 @@ const CustomerManagementDashboard = () => {
 
             try {
                 const targetCustomerId = selectedCustomer.id;
-                console.log(`Fetching data for customer ID: ${targetCustomerId}`);
+                console.log(`Fetching detailed data for customer ID: ${targetCustomerId}`);
 
-                const [customerResult, latestRentalResult, historyResult] = await Promise.all([
-                    supabase.from(`app_${APP_ID}_customers`).select('*').eq('id', targetCustomerId).single(),
-                    supabase.from(`app_${APP_ID}_rentals`).select('*').eq('customer_id', targetCustomerId).order('created_at', { ascending: false }).limit(1).single(),
-                    getCustomerRentalHistory(targetCustomerId)
-                ]);
+                // Step 1: Fetch the full customer profile first, to ensure we have the latest contact info.
+                const { data: customerProfile, error: customerError } = await supabase
+                    .from(`app_${APP_ID}_customers`)
+                    .select('*')
+                    .eq('id', targetCustomerId)
+                    .single();
 
-                const { data: customerProfile, error: customerError } = customerResult;
-                const { data: latestRental, error: latestRentalError } = latestRentalResult;
-
-                console.log('Fetched Customer Profile:', customerProfile);
-                console.log('Fetched Latest Rental:', latestRental);
-
-                if (customerError && customerError.code !== 'PGRST116') {
+                if (customerError && customerError.code !== 'PGRST116') { // Allow 'not found'
                     throw new Error(`Failed to fetch customer profile: ${customerError.message}`);
                 }
-                if (latestRentalError && latestRentalError.code !== 'PGRST116') {
-                    console.warn(`Could not fetch latest rental: ${latestRentalError.message}`);
-                }
 
-                let dataToShow = {};
-                if (customerProfile) {
-                    dataToShow = { ...customerProfile, isRentalBased: false };
-                    if (latestRental) {
-                        dataToShow.email = customerProfile.email || latestRental.customer_email || latestRental.email;
-                        dataToShow.phone = customerProfile.phone || latestRental.customer_phone || latestRental.phone;
-                        dataToShow.licence_number = customerProfile.licence_number || latestRental.customer_licence_number || latestRental.licence_number;
-                    }
-                } else if (latestRental) {
-                    dataToShow = {
-                        id: targetCustomerId,
-                        isRentalBased: true,
-                        full_name: latestRental.customer_name,
-                        email: latestRental.customer_email || latestRental.email,
-                        phone: latestRental.customer_phone || latestRental.phone,
-                        licence_number: latestRental.licence_number || latestRental.customer_licence_number,
-                        created_at: latestRental.created_at,
-                        id_scan_url: latestRental.id_scan_url,
-                    };
-                } else {
-                    throw new Error(`Customer with ID ${targetCustomerId} not found, and no rental history is available.`);
+                // Step 2: Now, call the rental history service using the default import.
+                const historyResult = await CustomerService.getCustomerRentalHistory(targetCustomerId);
+
+                // Step 3: Consolidate the customer data.
+                let dataToShow = { ...selectedCustomer, ...(customerProfile || {}) };
+                if (!dataToShow.id) {
+                    dataToShow.id = targetCustomerId; // Ensure ID is present
                 }
                 
-                console.log('Final Contact Info:', {
-                    email: dataToShow.email,
-                    phone: dataToShow.phone,
-                    license: dataToShow.licence_number
-                });
+                // Fallback contact info from the list if the profile is missing it
+                dataToShow.email = dataToShow.email || selectedCustomer.email;
+                dataToShow.phone = dataToShow.phone || selectedCustomer.phone;
+                dataToShow.licence_number = dataToShow.licence_number || selectedCustomer.licence_number;
+                dataToShow.nationality = dataToShow.nationality || selectedCustomer.nationality;
 
-                const allRentals = historyResult.success ? historyResult.data : [];
+                // Step 4: Process and assign the rental history.
+                const rentalHistory = historyResult.success ? historyResult.data : [];
+                dataToShow.rentalHistory = rentalHistory;
+
+                // Step 5: Consolidate document URLs from both profile and all rentals.
                 const idScanUrls = new Set();
                 const extraImages = new Set();
+
                 if (dataToShow.id_scan_url) idScanUrls.add(dataToShow.id_scan_url);
-                if (Array.isArray(dataToShow.extra_images)) dataToShow.extra_images.forEach(img => img && extraImages.add(img));
-                allRentals.forEach(item => {
+                if (Array.isArray(dataToShow.extra_images)) {
+                    dataToShow.extra_images.forEach(img => img && extraImages.add(img));
+                }
+                
+                rentalHistory.forEach(item => {
                     if (item.id_scan_url) idScanUrls.add(item.id_scan_url);
-                    if (Array.isArray(item.extra_images)) item.extra_images.forEach(img => img && extraImages.add(img));
+                    if (Array.isArray(item.extra_images)) {
+                        item.extra_images.forEach(img => img && extraImages.add(img));
+                    }
+                    if (item.customer_id_image) idScanUrls.add(item.customer_id_image);
                 });
 
-                dataToShow.all_docs = { id_scan_urls: Array.from(idScanUrls), extra_images: Array.from(extraImages) };
-                dataToShow.rentalHistory = allRentals.map(rental => ({
-                    rental_id: rental.id,
-                    vehicle_model: rental.vehicle ? `${rental.vehicle.brand} ${rental.vehicle.model}` : 'Vehicle data not found',
-                    vehicle_plate_number: rental.vehicle ? rental.vehicle.plate_number : 'Unknown plate',
-                    rental_start_date: rental.rental_start_date,
-                    rental_end_date: rental.rental_end_date,
-                    total_amount: rental.total_amount,
-                    status: rental.rental_status,
-                    created_at: rental.created_at,
-                }));
+                dataToShow.all_docs = { 
+                    id_scan_urls: Array.from(idScanUrls), 
+                    extra_images: Array.from(extraImages) 
+                };
 
                 setDetailedCustomer(dataToShow);
 
@@ -477,21 +458,21 @@ const CustomerManagementDashboard = () => {
             <div className="lg:col-span-2 space-y-6">
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                 <h2 className="text-lg font-semibold text-gray-900 mb-4">Personal Information</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                  <div><span className="font-medium text-gray-600">Full Name:</span><p className="text-gray-900">{detailedCustomer.full_name || 'N/A'}</p></div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 text-sm">
+                  <div><span className="font-medium text-gray-600">Full Name:</span><p className="text-gray-900 break-words">{detailedCustomer.full_name || 'N/A'}</p></div>
                   <div><span className="font-medium text-gray-600">Customer ID:</span><p className="text-gray-900 text-xs break-all">{detailedCustomer.id}</p></div>
-                  <div><span className="font-medium text-gray-600">Date of Birth:</span><p className="text-gray-900">{formatDate(detailedCustomer.date_of_birth)}</p></div>
-                  <div><span className="font-medium text-gray-600">Place of Birth:</span><p className="text-gray-900">{detailedCustomer.place_of_birth || 'N/A'}</p></div>
-                  <div><span className="font-medium text-gray-600">Nationality:</span><p className="text-gray-900">{detailedCustomer.nationality || 'N/A'}</p></div>
+                  <div><span className="font-medium text-gray-600">Date of Birth:</span><p className="text-gray-900 break-words">{formatDate(detailedCustomer.date_of_birth)}</p></div>
+                  <div><span className="font-medium text-gray-600">Place of Birth:</span><p className="text-gray-900 break-words">{detailedCustomer.place_of_birth || 'N/A'}</p></div>
+                  <div><span className="font-medium text-gray-600">Nationality:</span><p className="text-gray-900 break-words">{detailedCustomer.nationality || 'N/A'}</p></div>
                 </div>
               </div>
 
               <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
                 <h2 className="text-lg font-semibold text-gray-900 mb-4">Contact & Legal Information</h2>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                  <div><span className="font-medium text-gray-600">Email:</span><p className="text-gray-900">{detailedCustomer.email || 'N/A'}</p></div>
-                  <div><span className="font-medium text-gray-600">Phone:</span><p className="text-gray-900">{detailedCustomer.phone || 'N/A'}</p></div>
-                  <div className="md:col-span-2"><span className="font-medium text-gray-600">License Number:</span><p className="text-gray-900">{detailedCustomer.licence_number || 'N/A'}</p></div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 text-sm">
+                  <div><span className="font-medium text-gray-600">Email:</span><p className="text-gray-900 break-words">{detailedCustomer.email || 'N/A'}</p></div>
+                  <div><span className="font-medium text-gray-600">Phone:</span><p className="text-gray-900 break-words">{detailedCustomer.phone || 'N/A'}</p></div>
+                  <div className="md:col-span-2"><span className="font-medium text-gray-600">License Number:</span><p className="text-gray-900 break-words">{detailedCustomer.licence_number || 'N/A'}</p></div>
                 </div>
               </div>
 
@@ -501,25 +482,34 @@ const CustomerManagementDashboard = () => {
                   <p className="text-gray-500 text-sm">No rental history available.</p>
                 ) : (
                   <div className="space-y-3">
-                    {(detailedCustomer.rentalHistory || []).map((rental) => (
-                      <div key={rental.rental_id} className="border border-gray-200 rounded-lg p-4">
-                        <div className="flex justify-between items-start mb-2">
-                          <div>
-                            <p className="font-medium text-gray-900">{rental.vehicle_model} - {rental.vehicle_plate_number}</p>
-                            <Link to={`/admin/rentals/${rental.rental_id}`} className="text-sm text-blue-600 hover:underline">
-                              Rental ID: {rental.rental_id}
-                            </Link>
+                    {(detailedCustomer.rentalHistory || []).map((r) => {
+                      const amount = r.total_amount ?? r.amount ?? 0;
+                      const status = r.rental_status || r.status;
+                      const bookedDate = r.created_at;
+                      return (
+                        <div key={r.id} className="border border-gray-200 rounded-lg p-4">
+                          <div className="flex justify-between items-start mb-2">
+                            <div>
+                              <p className="font-medium text-gray-900">{r.vehicle?.name || 'Unknown Vehicle'}</p>
+                              <Link to={`/admin/rentals/${r.id}`} className="text-sm text-blue-600 hover:underline">
+                                Rental ID: {r.id}
+                              </Link>
+                            </div>
+                            <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
+                              status === 'active' ? 'bg-green-100 text-green-800' : 
+                              status === 'completed' ? 'bg-blue-100 text-blue-800' : 
+                              'bg-gray-100 text-gray-800'
+                            }`}>{status || 'N/A'}</span>
                           </div>
-                          <span className={`px-2 py-1 text-xs font-semibold rounded-full ${rental.status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>{rental.status}</span>
+                          <div className="grid grid-cols-2 gap-2 text-sm text-gray-600">
+                            <div><span className="font-medium">Start:</span> {formatDate(r.rental_start_date)}</div>
+                            <div><span className="font-medium">End:</span> {formatDate(r.rental_end_date)}</div>
+                            <div><span className="font-medium">Amount:</span> {formatCurrency(amount)}</div>
+                            <div><span className="font-medium">Booked:</span> {formatDate(bookedDate)}</div>
+                          </div>
                         </div>
-                        <div className="grid grid-cols-2 gap-2 text-sm text-gray-600">
-                          <div><span className="font-medium">Start:</span> {formatDate(rental.rental_start_date)}</div>
-                          <div><span className="font-medium">End:</span> {formatDate(rental.rental_end_date)}</div>
-                          <div><span className="font-medium">Amount:</span> {formatCurrency(rental.total_amount)}</div>
-                          <div><span className="font-medium">Booked:</span> {formatDate(rental.created_at)}</div>
-                        </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -531,181 +521,171 @@ const CustomerManagementDashboard = () => {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4 md:p-6">
-      <div className="max-w-full mx-auto">
-        <header className="mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">Customer Management</h1>
-          <p className="text-gray-600 mt-1">View, manage, and analyze your customer data.</p>
-        </header>
-
-        {error && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">
-            <strong className="font-bold">Error:</strong>
-            <span className="block sm:inline"> {error}</span>
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-6">
-          <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-            <h3 className="text-sm font-medium text-gray-500">Total Customers</h3>
-            <p className="text-2xl font-semibold text-gray-900">{aggregatedData.summary.totalCustomers}</p>
-          </div>
-          <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-            <h3 className="text-sm font-medium text-gray-500">Active Rentals</h3>
-            <p className="text-2xl font-semibold text-gray-900">{aggregatedData.summary.totalActiveRentals}</p>
-          </div>
-          <div className="bg-white p-4 rounded-lg shadow-sm border border-gray-200">
-            <h3 className="text-sm font-medium text-gray-500">Total Revenue</h3>
-            <p className="text-2xl font-semibold text-gray-900">{formatCurrency(aggregatedData.summary.totalRevenue)}</p>
-          </div>
-        </div>
-        
-        <div className="bg-white rounded-lg shadow-sm border border-gray-200">
-          <div className="p-4 border-b border-gray-200">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <input
-                type="text"
-                placeholder="Search by name or email..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-              />
-              <select
-                value={statusFilter}
-                onChange={(e) => setStatusFilter(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="All">All Statuses</option>
-                <option value="Active">Active</option>
-                <option value="Inactive">Inactive</option>
-              </select>
-              <select
-                value={nationalityFilter}
-                onChange={(e) => setNationalityFilter(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="All">All Nationalities</option>
-                {availableNationalities.map(nat => <option key={nat} value={nat}>{nat}</option>)}
-              </select>
+    <div className="min-h-screen bg-gray-100 p-4 md:p-6">
+        <div className="max-w-7xl mx-auto">
+            <div className="mb-6">
+                <h1 className="text-2xl font-bold text-gray-900">Customer Management</h1>
+                <p className="text-gray-600">Manage, view, and analyze customer data.</p>
             </div>
-            <div className="flex items-center justify-between mt-4">
-              <button
-                onClick={clearFilters}
-                className="text-sm text-blue-600 hover:underline"
-              >
-                Clear Filters
-              </button>
-              {selectedCustomerIds.length > 0 && (
-                <button
-                  onClick={() => setShowBulkDeleteModal(true)}
-                  className="px-3 py-1 bg-red-600 text-white rounded-md text-sm hover:bg-red-700"
-                >
-                  Delete Selected ({selectedCustomerIds.length})
-                </button>
-              )}
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                    <h3 className="text-sm font-medium text-gray-500">Total Customers</h3>
+                    <p className="text-3xl font-semibold text-gray-900">{aggregatedData.summary.totalCustomers}</p>
+                </div>
+                <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                    <h3 className="text-sm font-medium text-gray-500">Active Rentals</h3>
+                    <p className="text-3xl font-semibold text-gray-900">{aggregatedData.summary.totalActiveRentals}</p>
+                </div>
+                <div className="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                    <h3 className="text-sm font-medium text-gray-500">Total Revenue</h3>
+                    <p className="text-3xl font-semibold text-gray-900">{formatCurrency(aggregatedData.summary.totalRevenue)}</p>
+                </div>
             </div>
-          </div>
-          
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-gray-200">
-              <thead className="bg-gray-50">
-                <tr>
-                  <th scope="col" className="p-4 text-left">
-                    <input
-                      type="checkbox"
-                      ref={headerCheckboxRef}
-                      onChange={handleSelectAll}
-                      disabled={eligibleForSelectionCount === 0}
-                      className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
-                    />
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Customer
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Contact
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Rentals
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Total Spent
-                  </th>
-                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Joined
-                  </th>
-                  <th scope="col" className="relative px-6 py-3">
-                    <span className="sr-only">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="bg-white divide-y divide-gray-200">
-                {aggregatedData.customers.map((customer) => (
-                  <tr key={customer.id} className="hover:bg-gray-50">
-                    <td className="p-4">
-                      {customer.totalRentals === 0 && (
+            <div className="bg-white rounded-lg shadow-sm border border-gray-200">
+                <div className="p-4 border-b border-gray-200">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <input
-                          type="checkbox"
-                          checked={selectedCustomerIds.includes(customer.id)}
-                          onChange={() => handleSelectCustomer(customer.id)}
-                          className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                            type="text"
+                            placeholder="Search by name or email..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                         />
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="flex items-center">
-                        <div className="flex-shrink-0 h-10 w-10">
-                          <div className="h-10 w-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold">
-                            {getInitial(customer.full_name)}
-                          </div>
-                        </div>
-                        <div className="ml-4">
-                          <div
-                            className="text-sm font-medium text-blue-600 hover:underline cursor-pointer"
-                            onClick={() => openFullPageView(customer)}
-                          >
-                            {customer.full_name}
-                          </div>
-                          <div className="text-xs text-gray-500">{customer.nationality}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">{customer.email || 'No email'}</div>
-                      <div className="text-sm text-gray-500">{customer.phone || 'No phone'}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${customer.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
-                        {customer.status}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center">{customer.totalRentals}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">{formatCurrency(customer.totalSpent)}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatDate(customer.created_at)}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                      <button onClick={() => openFullPageView(customer)} className="text-indigo-600 hover:text-indigo-900 mr-3">View</button>
-                      <button onClick={() => openEditModal(customer)} className="text-blue-600 hover:text-blue-900 mr-3">Edit</button>
-                      <button onClick={() => openDeleteModal(customer)} className="text-red-600 hover:text-red-900">Delete</button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                        <select
+                            value={statusFilter}
+                            onChange={(e) => setStatusFilter(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                        >
+                            <option value="All">All Statuses</option>
+                            <option value="Active">Active</option>
+                            <option value="Inactive">Inactive</option>
+                        </select>
+                        <select
+                            value={nationalityFilter}
+                            onChange={(e) => setNationalityFilter(e.target.value)}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                        >
+                            <option value="All">All Nationalities</option>
+                            {availableNationalities.map(nat => <option key={nat} value={nat}>{nat}</option>)}
+                        </select>
+                    </div>
+                    <div className="flex items-center justify-between mt-4">
+                        <button
+                            onClick={clearFilters}
+                            className="text-sm text-blue-600 hover:underline"
+                        >
+                            Clear Filters
+                        </button>
+                        {selectedCustomerIds.length > 0 && (
+                            <button
+                                onClick={() => setShowBulkDeleteModal(true)}
+                                className="px-3 py-1 bg-red-600 text-white rounded-md text-sm hover:bg-red-700"
+                            >
+                                Delete Selected ({selectedCustomerIds.length})
+                            </button>
+                        )}
+                    </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                            <tr>
+                                <th scope="col" className="p-4 text-left">
+                                    <input
+                                        type="checkbox"
+                                        ref={headerCheckboxRef}
+                                        onChange={handleSelectAll}
+                                        disabled={eligibleForSelectionCount === 0}
+                                        className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                                    />
+                                </th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Customer
+                                </th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Contact
+                                </th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Status
+                                </th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Rentals
+                                </th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Total Spent
+                                </th>
+                                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                                    Joined
+                                </th>
+                                <th scope="col" className="relative px-6 py-3">
+                                    <span className="sr-only">Actions</span>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                            {aggregatedData.customers.map((customer) => (
+                                <tr key={customer.id} className="hover:bg-gray-50">
+                                    <td className="p-4">
+                                        {customer.totalRentals === 0 && (
+                                            <input
+                                                type="checkbox"
+                                                checked={selectedCustomerIds.includes(customer.id)}
+                                                onChange={() => handleSelectCustomer(customer.id)}
+                                                className="h-4 w-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
+                                            />
+                                        )}
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap">
+                                        <div className="flex items-center">
+                                            <div className="flex-shrink-0 h-10 w-10">
+                                                <div className="h-10 w-10 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold">
+                                                    {getInitial(customer.full_name)}
+                                                </div>
+                                            </div>
+                                            <div className="ml-4">
+                                                <div
+                                                    className="text-sm font-medium text-blue-600 hover:underline cursor-pointer"
+                                                    onClick={() => openFullPageView(customer)}
+                                                >
+                                                    {customer.full_name}
+                                                </div>
+                                                <div className="text-xs text-gray-500">{customer.nationality || 'N/A'}</div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap">
+                                        <div className="text-sm text-gray-900">{customer.email || 'No email'}</div>
+                                        <div className="text-sm text-gray-500">{customer.phone || 'No phone'}</div>
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap">
+                                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${customer.status === 'Active' ? 'bg-green-100 text-green-800' : 'bg-yellow-100 text-yellow-800'}`}>
+                                            {customer.status}
+                                        </span>
+                                    </td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 text-center">{customer.totalRentals}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 font-medium">{formatCurrency(customer.totalSpent)}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{formatDate(customer.created_at)}</td>
+                                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                        <button onClick={() => openFullPageView(customer)} className="text-indigo-600 hover:text-indigo-900 mr-3">View</button>
+                                        <button onClick={() => openEditModal(customer)} className="text-blue-600 hover:text-blue-900 mr-3">Edit</button>
+                                        <button onClick={() => openDeleteModal(customer)} className="text-red-600 hover:text-red-900">Delete</button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
-      </div>
-
-      {viewModalOpen && selectedCustomer && (
-        <ViewCustomerDetailsDrawer
-          isOpen={viewModalOpen}
-          onClose={() => setViewModalOpen(false)}
-          customerId={selectedCustomer.id}
-        />
-      )}
-
+        {viewModalOpen && selectedCustomer && (
+            <ViewCustomerDetailsDrawer
+                isOpen={viewModalOpen}
+                onClose={() => setViewModalOpen(false)}
+                customerId={selectedCustomer.id}
+            />
+        )}
     </div>
   );
 };

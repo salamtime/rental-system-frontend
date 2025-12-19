@@ -104,11 +104,31 @@ export const PermissionGate = ({
 }) => {
   const { userProfile, hasPermission } = useAuth(); // Use useAuth directly
 
+  console.log('🔍 PermissionGate check:', {
+    moduleName,
+    roles,
+    userProfile: userProfile ? { role: userProfile.role, email: userProfile.email } : null,
+    hasUserProfile: !!userProfile
+  });
+
   // Check permission for the module
   const hasRequiredPermission = moduleName ? hasPermission(moduleName) : true;
   
+  console.log('🔍 Permission check result:', {
+    moduleName,
+    hasRequiredPermission,
+    rolesCheck: roles.length > 0 ? `Checking roles: ${roles.join(', ')}` : 'No role check'
+  });
+  
   // Check roles
   const hasRequiredRole = roles.length > 0 ? (userProfile && roles.includes(userProfile.role)) : true;
+
+  console.log('🔍 Final gate decision:', {
+    moduleName,
+    hasRequiredPermission,
+    hasRequiredRole,
+    willRender: hasRequiredPermission && hasRequiredRole
+  });
 
   if (hasRequiredPermission && hasRequiredRole) {
     return children;

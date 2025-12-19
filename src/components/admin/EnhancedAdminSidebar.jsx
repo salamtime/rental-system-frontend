@@ -26,6 +26,7 @@ const EnhancedAdminSidebar = () => {
   const location = useLocation();
   const { user, userProfile, loading } = useAuth();
 
+  // UPDATED MODULE NAMES TO MATCH DATABASE
   const sidebarItems = [
     {
       name: 'Dashboard',
@@ -35,17 +36,17 @@ const EnhancedAdminSidebar = () => {
       description: 'Overview and analytics'
     },
     {
-      name: 'Tours & Booking',
+      name: 'Tours & Bookings',
       href: '/admin/tours',
       icon: MapPin,
-      moduleName: 'Tours & Booking',
+      moduleName: 'Tours & Bookings',
       description: 'Manage tours and packages'
     },
     {
-      name: 'Booking Management',
+      name: 'Rental Management',
       href: '/admin/bookings',
       icon: Calendar,
-      moduleName: 'Booking Management',
+      moduleName: 'Rental Management',
       description: 'Customer bookings'
     },
     {
@@ -63,10 +64,10 @@ const EnhancedAdminSidebar = () => {
       description: 'Maintenance tracking'
     },
     {
-      name: 'Fuel Records',
+      name: 'Fuel Logs',
       href: '/admin/fuel',
       icon: Fuel,
-      moduleName: 'Fuel Records',
+      moduleName: 'Fuel Logs',
       description: 'Fuel consumption logs'
     },
     {
@@ -114,12 +115,7 @@ const EnhancedAdminSidebar = () => {
     );
   }
 
-  const visibleSidebarItems = sidebarItems.filter(item => {
-    if (userProfile.role === 'employee') {
-      return ['Booking Management', 'Fleet Management', 'Quad Maintenance', 'Dashboard'].includes(item.moduleName);
-    }
-    return true;
-  });
+  const visibleSidebarItems = sidebarItems;
 
   return (
     <div className="w-64 bg-white shadow-sm border-r border-gray-200 flex flex-col h-full">
@@ -159,7 +155,7 @@ const EnhancedAdminSidebar = () => {
       <nav className="flex-1 overflow-y-auto py-4">
         <div className="space-y-1 px-3">
           {sidebarItems.map((item) => (
-            <PermissionGate key={item.name} moduleName={item.moduleName} roles={userProfile.role === 'employee' ? ['employee'] : ['admin', 'owner']}>
+            <PermissionGate key={item.name} moduleName={item.moduleName}>
               <NavLink
                 to={item.href}
                 className={({ isActive: navIsActive }) => {

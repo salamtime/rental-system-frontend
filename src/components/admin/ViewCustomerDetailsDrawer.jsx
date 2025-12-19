@@ -57,6 +57,7 @@ const ViewCustomerDetailsDrawer = ({
             email: rental.customer_email || rental.email,
             phone: rental.customer_phone || rental.phone,
             licence_number: rental.customer_licence_number || rental.licence_number,
+            nationality: rental.nationality,
             created_at: rental.created_at,
             customer_id_image: rental.customer_id_image,
           });
@@ -96,6 +97,7 @@ const ViewCustomerDetailsDrawer = ({
           dataToShow.email = customerProfile.email || fallbackRental.customer_email || fallbackRental.email;
           dataToShow.phone = customerProfile.phone || fallbackRental.customer_phone || fallbackRental.phone;
           dataToShow.licence_number = customerProfile.licence_number || fallbackRental.customer_licence_number || fallbackRental.licence_number;
+          dataToShow.nationality = customerProfile.nationality || fallbackRental.nationality;
         }
       } else if (fallbackRental) {
         // No customer profile exists. Construct a temporary profile from the latest rental data.
@@ -106,6 +108,7 @@ const ViewCustomerDetailsDrawer = ({
           email: fallbackRental.customer_email || fallbackRental.email,
           phone: fallbackRental.customer_phone || fallbackRental.phone,
           licence_number: fallbackRental.customer_licence_number || fallbackRental.licence_number,
+          nationality: fallbackRental.nationality,
           created_at: fallbackRental.created_at,
           customer_id_image: fallbackRental.customer_id_image,
           id_scan_url: fallbackRental.customer?.id_scan_url,
@@ -208,6 +211,7 @@ const ViewCustomerDetailsDrawer = ({
         email: sourceRental.customer_email || sourceRental.email,
         phone: sourceRental.customer_phone || sourceRental.phone,
         licence_number: sourceRental.licence_number || sourceRental.customer_licence_number,
+        nationality: sourceRental.nationality,
         id_number: sourceRental.id_number || sourceRental.customer_id_number,
       };
 
@@ -313,10 +317,41 @@ const ViewCustomerDetailsDrawer = ({
               <div className="bg-gray-50 rounded-lg p-4">
                 <h3 className="text-sm font-medium text-gray-900 mb-3 flex items-center"><User className="h-4 w-4 mr-2 text-blue-600" />Contact Information</h3>
                 <div className="space-y-3">
-                  <div className="flex items-center"><span className="text-sm text-gray-500 w-20">Name:</span><span className="text-sm font-medium text-gray-900">{customerData?.full_name ?? 'N/A'}</span></div>
-                  <div className="flex items-center"><Mail className="h-4 w-4 text-gray-400 mr-2" /><span className="text-sm text-gray-500 w-16">Email:</span><span className="text-sm text-gray-900">{customerData?.email ?? 'N/A'}</span></div>
-                  <div className="flex items-center"><Phone className="h-4 w-4 text-gray-400 mr-2" /><span className="text-sm text-gray-500 w-16">Phone:</span><span className="text-sm text-gray-900">{customerData?.phone ?? 'N/A'}</span></div>
-                  <div className="flex items-center"><CreditCard className="h-4 w-4 text-gray-400 mr-2" /><span className="text-sm text-gray-500 w-16">License:</span><span className="text-sm text-gray-900">{customerData?.licence_number ?? 'N/A'}</span></div>
+                  <div className="flex items-start">
+                      <div className="w-28 flex-shrink-0 flex items-center">
+                          <User className="h-4 w-4 text-gray-400 mr-2" />
+                          <span className="text-sm text-gray-500">Name:</span>
+                      </div>
+                      <span className="text-sm font-medium text-gray-900 break-words">{customerData?.full_name ?? 'N/A'}</span>
+                  </div>
+                  <div className="flex items-start">
+                      <div className="w-28 flex-shrink-0 flex items-center">
+                          <Mail className="h-4 w-4 text-gray-400 mr-2" />
+                          <span className="text-sm text-gray-500">Email:</span>
+                      </div>
+                      <span className="text-sm text-gray-900 break-words">{customerData?.email ?? 'N/A'}</span>
+                  </div>
+                  <div className="flex items-start">
+                      <div className="w-28 flex-shrink-0 flex items-center">
+                          <Phone className="h-4 w-4 text-gray-400 mr-2" />
+                          <span className="text-sm text-gray-500">Phone:</span>
+                      </div>
+                      <span className="text-sm text-gray-900 break-words">{customerData?.phone ?? 'N/A'}</span>
+                  </div>
+                  <div className="flex items-start">
+                      <div className="w-28 flex-shrink-0 flex items-center">
+                          <CreditCard className="h-4 w-4 text-gray-400 mr-2" />
+                          <span className="text-sm text-gray-500">License:</span>
+                      </div>
+                      <span className="text-sm text-gray-900 break-words">{customerData?.licence_number ?? 'N/A'}</span>
+                  </div>
+                  <div className="flex items-start">
+                      <div className="w-28 flex-shrink-0 flex items-center">
+                          <MapPin className="h-4 w-4 text-gray-400 mr-2" />
+                          <span className="text-sm text-gray-500">Nationality:</span>
+                      </div>
+                      <span className="text-sm text-gray-900 break-words">{customerData?.nationality ?? 'N/A'}</span>
+                  </div>
                 </div>
               </div>
 

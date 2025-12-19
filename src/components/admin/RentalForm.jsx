@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useSelector } from 'react-redux';
 import { selectVehicles } from '../../store/slices/vehiclesSlice';
-import { User, Calendar, Car, MapPin, CreditCard, FileText } from 'lucide-react';
+import { User, Calendar, Car, MapPin, CreditCard, FileText, UserSearch } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
 
 const RentalForm = ({ onSubmit, initialData = null, isLoading = false }) => {
   // Form state
@@ -39,10 +40,51 @@ const RentalForm = ({ onSubmit, initialData = null, isLoading = false }) => {
 
   const [errors, setErrors] = useState({});
   const vehicles = useSelector(selectVehicles) || [];
+  
+  const [customers, setCustomers] = useState([]);
+  const [rentals, setRentals] = useState([]);
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const customerSearchRef = useRef(null);
+  const isProgrammaticChange = useRef(false);
+
+  // Fetch initial data for suggestions
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const [customersResponse, rentalsResponse] = await Promise.all([
+          supabase.from('app_4c3a7a6153_customers').select('*'),
+          supabase.from('app_4c3a7a6153_rentals').select('*').order('created_at', { ascending: false }),
+        ]);
+
+        if (customersResponse.data) setCustomers(customersResponse.data);
+        if (rentalsResponse.data) setRentals(rentalsResponse.data);
+        console.log('[RentalForm Autocomplete] Fetched initial customer and rental data.');
+      } catch (err) {
+        console.error("Failed to fetch initial data for auto-population in RentalForm", err);
+      }
+    };
+
+    fetchData();
+  }, []);
+
+  // Handle clicks outside the suggestions dropdown
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (customerSearchRef.current && !customerSearchRef.current.contains(event.target)) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
 
   // Initialize form with existing data
   useEffect(() => {
     if (initialData) {
+      isProgrammaticChange.current = true;
       setFormData({
         customer_name: initialData.customer_name || '',
         customer_email: initialData.customer_email || '',
@@ -76,6 +118,64 @@ const RentalForm = ({ onSubmit, initialData = null, isLoading = false }) => {
       });
     }
   }, [initialData]);
+
+  const getAggregatedCustomerData = useCallback(() => {
+    const customerMap = new Map();
+    customers.forEach(c => {
+        if (c.full_name) {
+            const key = c.full_name.trim().toLowerCase();
+            if (!customerMap.has(key)) {
+                customerMap.set(key, {
+                    id: c.id,
+                    name: c.full_name,
+                    email: c.email,
+                    phone: c.phone,
+                    licence_number: c.licence_number,
+                    source: 'customer'
+                });
+            }
+        }
+    });
+    rentals.forEach(r => {
+        if (r.customer_name) {
+            const key = r.customer_name.trim().toLowerCase();
+            const existing = customerMap.get(key);
+            if (existing) {
+                if (!existing.email && r.customer_email) existing.email = r.customer_email;
+                if (!existing.phone && r.customer_phone) existing.phone = r.customer_phone;
+                if (!existing.licence_number && r.customer_licence_number) existing.licence_number = r.customer_licence_number;
+            } else {
+                customerMap.set(key, {
+                    id: r.customer_id,
+                    name: r.customer_name,
+                    email: r.customer_email,
+                    phone: r.customer_phone,
+                    licence_number: r.customer_licence_number,
+                    source: 'rental'
+                });
+            }
+        }
+    });
+    return Array.from(customerMap.values());
+  }, [customers, rentals]);
+
+  useEffect(() => {
+    if (isProgrammaticChange.current && formData.customer_name) {
+        const customerData = getAggregatedCustomerData();
+        const searchName = formData.customer_name.trim().toLowerCase();
+        const match = customerData.find(c => c.name.trim().toLowerCase() === searchName);
+
+        if (match) {
+            console.log('🤖 [Admin] Found automatic match for customer:', match);
+            setFormData(prev => ({
+                ...prev,
+                customer_email: prev.customer_email || match.email || '',
+                customer_phone: prev.customer_phone || match.phone || '',
+            }));
+        }
+        isProgrammaticChange.current = false;
+    }
+  }, [formData.customer_name, getAggregatedCustomerData]);
 
   // Calculate pricing when relevant fields change
   useEffect(() => {
@@ -146,12 +246,44 @@ const RentalForm = ({ onSubmit, initialData = null, isLoading = false }) => {
     }
   };
 
+  const handleSuggestionClick = (suggestion) => {
+    console.log('--- DEBUG: SELECTED CUSTOMER OBJECT (Admin) ---');
+    console.log(JSON.stringify(suggestion, null, 2));
+    console.log('---------------------------------------------');
+    isProgrammaticChange.current = false;
+    setFormData(prev => ({
+        ...prev,
+        customer_name: suggestion.name,
+        customer_email: suggestion.email || '',
+        customer_phone: suggestion.phone || '',
+        second_driver_license: suggestion.licence_number || '',
+    }));
+    setSuggestions([]);
+    setShowSuggestions(false);
+  };
+
   // Handle input changes
   const handleInputChange = (field, value) => {
     setFormData(prev => ({
       ...prev,
       [field]: value
     }));
+
+    if (field === 'customer_name') {
+        isProgrammaticChange.current = false;
+        if (value.length >= 2) {
+            const customerData = getAggregatedCustomerData();
+            const trimmedName = value.trim().toLowerCase();
+            const filteredSuggestions = customerData.filter(suggestion => 
+                suggestion.name.trim().toLowerCase().includes(trimmedName)
+            );
+            setSuggestions(filteredSuggestions);
+            setShowSuggestions(filteredSuggestions.length > 0);
+        } else {
+            setSuggestions([]);
+            setShowSuggestions(false);
+        }
+    }
     
     // Clear error when user starts typing
     if (errors[field]) {
@@ -171,7 +303,7 @@ const RentalForm = ({ onSubmit, initialData = null, isLoading = false }) => {
           Customer Information
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
+          <div className="relative" ref={customerSearchRef}>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               Customer Name *
             </label>
@@ -180,11 +312,33 @@ const RentalForm = ({ onSubmit, initialData = null, isLoading = false }) => {
               value={formData.customer_name}
               onChange={(e) => handleInputChange('customer_name', e.target.value)}
               placeholder="Enter customer name"
+              autoComplete="off"
               className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
                 errors.customer_name ? 'border-red-500' : 'border-gray-300'
               }`}
             />
-            {errors.customer_name && (
+            {showSuggestions && suggestions.length > 0 && (
+              <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-y-auto">
+                <ul>
+                  {suggestions.map((suggestion, index) => (
+                    <li
+                      key={index}
+                      onClick={() => handleSuggestionClick(suggestion)}
+                      className="px-4 py-2 cursor-pointer hover:bg-blue-50"
+                    >
+                      <div className="flex items-center">
+                        <UserSearch className="h-4 w-4 mr-2 text-gray-500" />
+                        <div>
+                            <p className="font-medium text-gray-800">{suggestion.name}</p>
+                            <p className="text-sm text-gray-500">{suggestion.phone} - {suggestion.email}</p>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {errors.customer_name && !showSuggestions && (
               <p className="text-red-500 text-xs mt-1">{errors.customer_name}</p>
             )}
           </div>

@@ -30,19 +30,32 @@ export const AuthProvider = ({ children }) => {
     try {
       const userRole = authUser.user_metadata?.role || 'customer';
       
-      if (!authUser.id || !userRole) {
-        throw new Error(`Invalid parameters for getUserPermissions: userId=${authUser.id}, userRole=${userRole}`);
+      if (!authUser.id) {
+        throw new Error(`Invalid userId: ${authUser.id}`);
       }
 
-      const userPermissions = await getUserPermissions(authUser.id, userRole);
+      // Call getUserPermissions with only userId parameter
+      const userPermissionsMap = await getUserPermissions(authUser.id);
+      
+      console.log('🔍 DEBUG: userPermissionsMap from getUserPermissions:', userPermissionsMap);
+      
+      // Convert permissions map to array format for backward compatibility
+      const userPermissions = Object.entries(userPermissionsMap).map(([module_name, is_allowed]) => ({
+        module_name,
+        has_access: is_allowed
+      }));
+      
+      console.log('🔍 DEBUG: userPermissions array after conversion:', userPermissions);
       
       const profile = {
         id: authUser.id,
         email: authUser.email,
         role: userRole,
         fullName: authUser.user_metadata?.full_name,
-        permissions: userPermissions || [],
+        permissions: userPermissions,
       };
+      
+      console.log('🔍 DEBUG: Final profile object:', profile);
 
       setUserProfile(profile);
       setSession(session);
@@ -101,12 +114,43 @@ export const AuthProvider = ({ children }) => {
   };
 
   const hasPermission = useCallback((moduleName) => {
+    console.log("🔍 hasPermission called with moduleName:", moduleName);
+    console.log("🔍 userProfile:", userProfile);
+    console.log("🔍 userProfile.permissions:", userProfile?.permissions);
+    
     if (!userProfile) return false;
     if (userProfile.role === 'owner') {
         return true;
     }
-    const permission = userProfile.permissions.find(p => p.module_name === moduleName);
-    return permission ? permission.has_access : false;
+    
+    // Map short module names to full database names
+    const nameMap = {
+      'dashboard': 'Dashboard',
+      'calendar': 'Calendar',
+      'tours': 'Tours & Bookings',
+      'rentals': 'Rental Management',
+      'customers': 'Customer Management',
+      'fleet': 'Fleet Management',
+      'pricing': 'Pricing Management',
+      'maintenance': 'Quad Maintenance',
+      'fuel': 'Fuel Logs',
+      'inventory': 'Inventory',
+      'finance': 'Finance Management',
+      'alerts': 'Alerts',
+      'users': 'User & Role Management',
+      'settings': 'System Settings',
+      'export': 'Project Export'
+    };
+    
+    // Get the full database name from the map, or use the original name if not found
+    const dbName = nameMap[moduleName.toLowerCase()] || moduleName;
+    console.log("🔍 Mapped module name:", moduleName, "->", dbName);
+    
+    const permission = userProfile.permissions.find(p => p.module_name.toLowerCase() === dbName.toLowerCase());
+    console.log("🔍 Found permission:", permission);
+    const result = permission ? permission.has_access : false;
+    console.log("🔍 hasPermission result:", result);
+    return result;
   }, [userProfile]);
 
   const refreshPermissions = useCallback(async () => {

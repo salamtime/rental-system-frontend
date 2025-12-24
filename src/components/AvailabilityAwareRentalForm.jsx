@@ -950,7 +950,7 @@ const AvailabilityAwareRentalForm = ({
       submissionReadyFormData.rental_end_time = currentTime;
     }
     
-    console.log('📝 FIXED SUBMISSION: Form submission started...');
+    console.log('📝 FRONTEND FIX: Form submission started...');
     console.log('📊 Current form data (with auto-filled time):', submissionReadyFormData);
     console.log('🔍 Submission state:', { canSubmit, loading, availabilityStatus });
     
@@ -972,7 +972,9 @@ const AvailabilityAwareRentalForm = ({
       return;
     }
     
+    // FRONTEND FIX: Properly handle email trimming without converting to null
     const trimmedEmail = (submissionReadyFormData.customer_email || '').trim();
+    const emailToSubmit = trimmedEmail.length > 0 ? trimmedEmail : null;
 
     if (trimmedEmail.length > 0) {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -983,7 +985,9 @@ const AvailabilityAwareRentalForm = ({
       }
     }
     
-    console.log('✅ FIXED SUBMISSION: Validation passed, proceeding with submission');
+    console.log('✅ FRONTEND FIX: Validation passed, proceeding with submission');
+    console.log('📧 FRONTEND FIX: Email value to submit:', emailToSubmit);
+    console.log('📞 FRONTEND FIX: Phone value to submit:', submissionReadyFormData.customer_phone);
     
     setLoading(true);
     setError(null);
@@ -1001,7 +1005,7 @@ const AvailabilityAwareRentalForm = ({
           id: newCustomerId,
           full_name: submissionReadyFormData.customer_name,
           phone: submissionReadyFormData.customer_phone,
-          email: trimmedEmail || null,
+          email: emailToSubmit,
           licence_number: submissionReadyFormData.customer_licence_number || null,
           id_number: submissionReadyFormData.customer_id_number || null,
           date_of_birth: submissionReadyFormData.customer_dob || null,
@@ -1027,9 +1031,14 @@ const AvailabilityAwareRentalForm = ({
         }));
       }
 
+      // FRONTEND FIX: Explicitly preserve customer_phone and customer_email in submission data
       const submissionData = {
         ...submissionReadyFormData,
         customer_id: finalCustomerId,
+        
+        // FRONTEND FIX: Explicitly set customer contact info (CRITICAL FIX)
+        customer_phone: submissionReadyFormData.customer_phone,
+        customer_email: emailToSubmit,
         
         vehicle_id: submissionReadyFormData.vehicle_id ? Number(submissionReadyFormData.vehicle_id) : null,
         quantity_days: Number(submissionReadyFormData.quantity_days) || 0,
@@ -1046,7 +1055,6 @@ const AvailabilityAwareRentalForm = ({
         rental_start_at: composeDateTime(submissionReadyFormData.rental_start_date, submissionReadyFormData.rental_start_time)?.toISOString(),
         rental_end_at: composeDateTime(submissionReadyFormData.rental_end_date, submissionReadyFormData.rental_end_time)?.toISOString(),
 
-        customer_email: trimmedEmail || null,
         accessories: submissionReadyFormData.accessories || null,
         customer_licence_number: submissionReadyFormData.customer_licence_number || null,
         customer_id_number: submissionReadyFormData.customer_id_number || null,
@@ -1061,7 +1069,9 @@ const AvailabilityAwareRentalForm = ({
       delete submissionData.vehicle;
       delete submissionData.booking_range;
 
-      console.log('Final Submission Payload:', submissionData);
+      console.log('📦 FRONTEND FIX: Final Submission Payload:', submissionData);
+      console.log('📧 FRONTEND FIX: Confirmed customer_email in payload:', submissionData.customer_email);
+      console.log('📞 FRONTEND FIX: Confirmed customer_phone in payload:', submissionData.customer_phone);
       
       let result;
       
@@ -1096,14 +1106,14 @@ const AvailabilityAwareRentalForm = ({
       let isConflict = false;
 
       if (err.message && err.message.includes('Database insertion failed:')) {
-        const dbErrorMatch = err.message.match(/Database insertion failed: (\\{.*?\\})/s); 
+        const dbErrorMatch = err.message.match(/Database insertion failed: (\{.*?\})/s); 
         if (dbErrorMatch && dbErrorMatch[1]) {
           try {
             const jsonString = dbErrorMatch[1].trim().replace(/^[\\']|[\\']$/g, '');
             const dbErrorObj = JSON.parse(jsonString);
             
             if (dbErrorObj.code === '23514' && dbErrorObj.message.includes('Vehicle availability check failed')) {
-                const match = dbErrorObj.message.match(/Next available:\\s*(\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2})/);
+                const match = dbErrorObj.message.match(/Next available:\s*(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})/);
                 if (match) nextAvailableTime = match[1];
                 errorMessage = `🚫 Vehicle Conflict: ${dbErrorObj.message}`;
                 isConflict = true;
@@ -1122,7 +1132,7 @@ const AvailabilityAwareRentalForm = ({
              err.message.includes('Vehicle is already booked')) {
            
            isConflict = true;
-           const match = err.message.match(/Next available:\\s*(\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2})/);
+           const match = err.message.match(/Next available:\s*(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})/);
            if (match) {
              nextAvailableTime = match[1];
            }

@@ -2,10 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
 import AvailabilityAwareRentalForm from '../../components/AvailabilityAwareRentalForm';
+import EnhancedStepperRentalForm from '../../components/admin/EnhancedStepperRentalForm';
 import VideoContractModal from '../../components/VideoContractModal';
 import VehicleAvailabilityService from '../../services/VehicleAvailabilityService';
 import ViewCustomerDetailsDrawer from '../../components/admin/ViewCustomerDetailsDrawer';
 import { getPaymentStatusStyle } from '../../config/statusColors';
+import { Sparkles } from 'lucide-react';
 
 const Rentals = () => {
   const navigate = useNavigate();
@@ -15,6 +17,7 @@ const Rentals = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [showStepperForm, setShowStepperForm] = useState(false);
   const [editingRental, setEditingRental] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -230,6 +233,7 @@ const Rentals = () => {
   const handleRentalSuccess = (rentalData) => {
     console.log('Rental operation successful:', rentalData);
     setShowForm(false);
+    setShowStepperForm(false);
     setEditingRental(null);
     fetchRentals(statusFilter, paymentStatusFilter);
     fetchAvailabilityData();
@@ -482,6 +486,18 @@ const Rentals = () => {
     );
   }
 
+  if (showStepperForm) {
+    return (
+      <div className="min-h-screen bg-gray-50 py-8">
+        <EnhancedStepperRentalForm
+          onSubmit={handleRentalSuccess}
+          initialData={editingRental}
+          isLoading={loading}
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 p-6">
       <div className="max-w-7xl mx-auto">
@@ -493,12 +509,19 @@ const Rentals = () => {
                 
               </p>
             </div>
-            <div className="mt-4 sm:mt-0">
+            <div className="mt-4 sm:mt-0 flex flex-col sm:flex-row gap-3">
               <button
                 onClick={() => setShowForm(true)}
-                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
               >
                 Add New Rental
+              </button>
+              <button
+                onClick={() => setShowStepperForm(true)}
+                className="flex items-center justify-center gap-2 px-6 py-3 bg-white text-blue-600 border-2 border-blue-600 rounded-lg hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+              >
+                <Sparkles className="w-5 h-5" />
+                <span>Create New Rental (Light Version)</span>
               </button>
             </div>
           </div>
@@ -573,12 +596,21 @@ const Rentals = () => {
               <p className="text-gray-600 mb-4">
                 {rentals.length === 0 ? 'No rentals found' : 'No rentals match your filters'}
               </p>
-              <button
-                onClick={() => setShowForm(true)}
-                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                Create First Rental
-              </button>
+              <div className="flex flex-col sm:flex-row gap-3 justify-center">
+                <button
+                  onClick={() => setShowForm(true)}
+                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                  Create First Rental
+                </button>
+                <button
+                  onClick={() => setShowStepperForm(true)}
+                  className="flex items-center justify-center gap-2 px-6 py-3 bg-white text-blue-600 border-2 border-blue-600 rounded-lg hover:bg-blue-50"
+                >
+                  <Sparkles className="w-5 h-5" />
+                  <span>Try Light Version</span>
+                </button>
+              </div>
             </div>
           ) : (
             <div className="overflow-x-auto">

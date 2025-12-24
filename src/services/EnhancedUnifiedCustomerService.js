@@ -9,135 +9,147 @@ import { geminiVisionOCR } from './ocr/optimizedGeminiVisionOcr.js';
  * - Automatic customer creation/update with image storage
  * - Enhanced data validation and sanitization
  * - Comprehensive error handling and logging
- * - FINAL FIX: Guaranteed id_scan_url field assignment during customer creation
- * - CRITICAL FIX: Phone number mapping from rental form to customer record
- * - RESTORED: processSequentialImageUpload function for ID scanning workflow
+ * - SHIELDING STRATEGY: Manual input always takes priority over OCR data
+ * - CRITICAL FIX: Phone number and email mapping protection
  * - FORM AUTO-POPULATION FIX: Returns extractedData in correct format for form population
  */
 class EnhancedUnifiedCustomerService {
 
   /**
-   * FINAL FIX: Save customer with GUARANTEED id_scan_url field assignment + PHONE NUMBER MAPPING
-   * This is the critical function that ensures the uploaded ID scan URL and phone number are properly saved
+   * SHIELDING STRATEGY: Save customer with intelligent merge that protects manual input
+   * Manual input is the "Master", OCR data is the "Assistant"
    */
   static async saveCustomer(customerData, scanResult = null) {
-    console.log('🆕 FINAL FIX: Starting customer save with GUARANTEED id_scan_url assignment + phone mapping:', {
+    console.log('🆕 SHIELDING STRATEGY: Starting customer save with protected manual input:', {
       customerData,
       scanResult
     });
     
     try {
-      // STEP 1: Validate input data
+      // Step 1: Validate input data
       if (!customerData) {
         throw new Error('Customer data is required');
       }
 
-      // STEP 2: FINAL CRITICAL FIX - Extract and validate id_scan_url
+      // Step 2: Extract and validate id_scan_url
       let idScanUrl = null;
       
-      // Priority 1: Use scanResult.file_public_url if provided
       if (scanResult?.file_public_url) {
         idScanUrl = scanResult.file_public_url;
-        console.log('✅ FINAL FIX: Using scanResult.file_public_url for id_scan_url:', idScanUrl);
-      }
-      // Priority 2: Use customerData.id_scan_url if provided
-      else if (customerData.id_scan_url) {
+        console.log('✅ Using scanResult.file_public_url for id_scan_url:', idScanUrl);
+      } else if (customerData.id_scan_url) {
         idScanUrl = customerData.id_scan_url;
-        console.log('✅ FINAL FIX: Using customerData.id_scan_url:', idScanUrl);
-      }
-      // Priority 3: Check for other URL fields
-      else if (customerData.scanUrl) {
-        idScanUrl = customerData.scanUrl;
-        console.log('✅ FINAL FIX: Using customerData.scanUrl:', idScanUrl);
-      }
-      else {
-        console.log('⚠️ FINAL FIX: No id_scan_url provided, will be set to null');
+        console.log('✅ Using customerData.id_scan_url:', idScanUrl);
+      } else {
+        console.log('⚠️ No id_scan_url provided, will be set to null');
       }
 
-      // STEP 3: CRITICAL PHONE NUMBER MAPPING FIX
-      let phoneNumber = null;
-      
-      // Priority 1: Use customer_phone from rental form
-      if (customerData.customer_phone) {
-        phoneNumber = customerData.customer_phone;
-        console.log('✅ PHONE MAPPING FIX: Using customer_phone from rental form:', phoneNumber);
-      }
-      // Priority 2: Use phone field directly
-      else if (customerData.phone) {
-        phoneNumber = customerData.phone;
-        console.log('✅ PHONE MAPPING FIX: Using phone field:', phoneNumber);
-      }
-      else {
-        console.log('⚠️ PHONE MAPPING FIX: No phone number provided');
-      }
-
-      // STEP 4: Sanitize and validate customer data
-      const sanitizedCustomerData = this.sanitizeCustomerData(customerData);
-      console.log('🧹 FINAL FIX: Sanitized customer data:', sanitizedCustomerData);
-
-      // STEP 5: CRITICAL IMAGE URL + PHONE ASSIGNMENT - Build final customer data with GUARANTEED fields
-      const finalCustomerData = {
-        // All OCR extracted data and form data
-        full_name: sanitizedCustomerData.full_name || sanitizedCustomerData.customer_name,
-        email: sanitizedCustomerData.email || sanitizedCustomerData.customer_email || null,
-        phone: phoneNumber, // CRITICAL PHONE MAPPING FIX
-        date_of_birth: sanitizedCustomerData.date_of_birth || sanitizedCustomerData.customer_dob || null,
-        nationality: sanitizedCustomerData.nationality || sanitizedCustomerData.customer_nationality || null,
-        licence_number: sanitizedCustomerData.licence_number || sanitizedCustomerData.customer_licence_number || null,
-        id_number: sanitizedCustomerData.id_number || sanitizedCustomerData.customer_id_number || null,
-        place_of_birth: sanitizedCustomerData.place_of_birth || sanitizedCustomerData.customer_place_of_birth || null,
-        issue_date: sanitizedCustomerData.issue_date || sanitizedCustomerData.customer_issue_date || null,
+      // Step 3: Fetch existing customer data if updating
+      let existingCustomer = null;
+      if (customerData.id) {
+        console.log('🔍 SHIELDING: Fetching existing customer data for merge:', customerData.id);
+        const { data: existing, error: fetchError } = await supabase
+          .from('app_4c3a7a6153_customers')
+          .select('*')
+          .eq('id', customerData.id)
+          .maybeSingle();
         
-        // FINAL CRITICAL FIX: GUARANTEE id_scan_url is assigned
-        id_scan_url: idScanUrl, // THIS IS THE CRITICAL FIELD THAT WAS MISSING
+        if (!fetchError && existing) {
+          existingCustomer = existing;
+          console.log('✅ SHIELDING: Found existing customer data:', existingCustomer);
+        }
+      }
+
+      // Step 4: Sanitize customer data
+      const sanitizedCustomerData = this.sanitizeCustomerData(customerData);
+      console.log('🧹 SHIELDING: Sanitized customer data:', sanitizedCustomerData);
+
+      // Step 5: SHIELDING STRATEGY - Build final customer data with intelligent merge
+      // Priority: Manual Input > Existing Data > OCR Data
+      const finalCustomerData = {
+        // Start with existing data as base (if available)
+        ...(existingCustomer || {}),
+        
+        // Layer OCR data on top (only fills empty fields)
+        full_name: sanitizedCustomerData.customer_name || sanitizedCustomerData.full_name || existingCustomer?.full_name,
+        date_of_birth: sanitizedCustomerData.customer_dob || sanitizedCustomerData.date_of_birth || existingCustomer?.date_of_birth || null,
+        nationality: sanitizedCustomerData.customer_nationality || sanitizedCustomerData.nationality || existingCustomer?.nationality || null,
+        licence_number: sanitizedCustomerData.customer_licence_number || sanitizedCustomerData.licence_number || existingCustomer?.licence_number || null,
+        id_number: sanitizedCustomerData.customer_id_number || sanitizedCustomerData.id_number || existingCustomer?.id_number || null,
+        place_of_birth: sanitizedCustomerData.customer_place_of_birth || sanitizedCustomerData.place_of_birth || existingCustomer?.place_of_birth || null,
+        issue_date: sanitizedCustomerData.customer_issue_date || sanitizedCustomerData.issue_date || existingCustomer?.issue_date || null,
+        
+        // CRITICAL SHIELDING: Protect email and phone - only update if explicitly provided and not empty
+        email: customerData.hasOwnProperty('customer_email') && sanitizedCustomerData.customer_email !== null
+          ? sanitizedCustomerData.customer_email
+          : (customerData.hasOwnProperty('email') && sanitizedCustomerData.email !== null
+            ? sanitizedCustomerData.email
+            : existingCustomer?.email),
+        
+        phone: customerData.hasOwnProperty('customer_phone') && sanitizedCustomerData.customer_phone !== null
+          ? sanitizedCustomerData.customer_phone
+          : (customerData.hasOwnProperty('phone') && sanitizedCustomerData.phone !== null
+            ? sanitizedCustomerData.phone
+            : existingCustomer?.phone),
+        
+        // Image URL
+        id_scan_url: idScanUrl || existingCustomer?.id_scan_url,
         
         // Metadata
-        created_at: new Date().toISOString(),
+        created_at: existingCustomer?.created_at || new Date().toISOString(),
         updated_at: new Date().toISOString()
       };
 
-      console.log('🎯 FINAL FIX: Final customer data with GUARANTEED id_scan_url + phone mapping:', finalCustomerData);
-      console.log('🖼️ FINAL FIX: id_scan_url field value:', finalCustomerData.id_scan_url);
-      console.log('📞 PHONE MAPPING FIX: phone field value:', finalCustomerData.phone);
+      console.log('🎯 SHIELDING: Final customer data with protected manual input:', finalCustomerData);
+      console.log('🖼️ SHIELDING: id_scan_url field value:', finalCustomerData.id_scan_url);
+      console.log('📞 SHIELDING: phone field value:', finalCustomerData.phone);
+      console.log('📧 SHIELDING: email field value:', finalCustomerData.email);
 
-      // STEP 6: Validate required fields
+      // Step 6: Validate required fields
       if (!finalCustomerData.full_name) {
         throw new Error('Customer full name is required');
       }
 
-      // STEP 7: FINAL VALIDATION - Ensure id_scan_url is properly set if image was uploaded
-      if (scanResult && !finalCustomerData.id_scan_url) {
-        console.error('❌ FINAL FIX: CRITICAL ERROR - scanResult provided but id_scan_url is null!');
-        console.error('❌ FINAL FIX: scanResult:', scanResult);
-        throw new Error('CRITICAL IMAGE URL ASSIGNMENT FAILURE: Scan result provided but id_scan_url could not be determined!');
-      }
-
-      // STEP 8: DUPLICATE PREVENTION & CUSTOMER LOOKUP
-      // New workflow: Check for existing customer by full_name and licence_number to prevent duplicates.
+      // Step 7: DUPLICATE PREVENTION & CUSTOMER LOOKUP - FIXED to handle multiple results
       if (finalCustomerData.full_name && finalCustomerData.licence_number) {
         console.log('🔍 DUPLICATE CHECK: Checking for customer with name and licence:', {
           name: finalCustomerData.full_name,
           licence: finalCustomerData.licence_number
         });
-        const { data: existingCustomer, error: lookupError } = await supabase
+        
+        // CRITICAL FIX: Use .limit(1) instead of .single() to handle multiple duplicates gracefully
+        const { data: duplicateCustomers, error: lookupError } = await supabase
           .from('app_4c3a7a6153_customers')
           .select('*')
           .eq('full_name', finalCustomerData.full_name)
           .eq('licence_number', finalCustomerData.licence_number)
-          .maybeSingle();
+          .limit(1);
 
         if (lookupError) {
           console.error('❌ DUPLICATE CHECK: Error looking up customer:', lookupError);
           throw new Error(`Customer lookup failed: ${lookupError.message}`);
         }
 
-        if (existingCustomer) {
-          console.log('✅ DUPLICATE CHECK: Customer already exists. Updating and using existing profile:', existingCustomer.id);
-          // Update the existing record with any new data from the latest scan
+        // Check if we found any duplicates
+        const duplicateCustomer = duplicateCustomers && duplicateCustomers.length > 0 ? duplicateCustomers[0] : null;
+
+        if (duplicateCustomer && duplicateCustomer.id !== customerData.id) {
+          console.log('✅ DUPLICATE CHECK: Customer already exists. Updating existing profile:', duplicateCustomer.id);
+
+          // Merge with existing customer, protecting manual input
+          const updatePayload = {
+            ...duplicateCustomer,
+            ...finalCustomerData,
+            id: duplicateCustomer.id, // Keep original ID
+            updated_at: new Date().toISOString()
+          };
+          
+          console.log('🛡️ SHIELDING: Merged update payload:', updatePayload);
+
           const { data: updatedCustomer, error: updateError } = await supabase
             .from('app_4c3a7a6153_customers')
-            .update({ ...finalCustomerData, updated_at: new Date().toISOString() })
-            .eq('id', existingCustomer.id)
+            .update(updatePayload)
+            .eq('id', duplicateCustomer.id)
             .select()
             .single();
 
@@ -146,7 +158,6 @@ class EnhancedUnifiedCustomerService {
             throw new Error(`Failed to update existing customer: ${updateError.message}`);
           }
 
-          // Return the (updated) existing customer, signaling that no new customer was created.
           return {
             success: true,
             data: updatedCustomer,
@@ -156,45 +167,28 @@ class EnhancedUnifiedCustomerService {
         }
       }
 
-      // If no duplicate was found, proceed to create a new customer.
-      console.log('🆕 Creating new customer record...');
-      
-      // BUG FIX: The customerToInsert object MUST include the ID generated on the client-side.
-      // The previous implementation incorrectly assumed the database would generate the ID.
-      const customerToInsert = {
-          id: customerData.id, // CRITICAL FIX: Use the ID from the incoming customerData
-          full_name: finalCustomerData.full_name,
-          email: finalCustomerData.email,
-          phone: finalCustomerData.phone,
-          date_of_birth: finalCustomerData.date_of_birth,
-          nationality: finalCustomerData.nationality,
-          licence_number: finalCustomerData.licence_number,
-          id_number: finalCustomerData.id_number,
-          place_of_birth: finalCustomerData.place_of_birth,
-          issue_date: finalCustomerData.issue_date,
-          id_scan_url: finalCustomerData.id_scan_url,
-          created_at: finalCustomerData.created_at,
-          updated_at: finalCustomerData.updated_at
+      // Step 8: Create or update customer
+      const customerToUpsert = {
+        id: customerData.id,
+        ...finalCustomerData,
       };
 
-      // Add a check to ensure the ID is not null before inserting
-      if (!customerToInsert.id) {
-          console.error('❌ CRITICAL ERROR: Attempting to insert a customer without a valid ID.');
-          throw new Error('Customer creation failed because no ID was provided.');
+      if (!customerToUpsert.id) {
+        console.error('❌ CRITICAL ERROR: Attempting to upsert a customer without a valid ID.');
+        throw new Error('Customer creation failed because no ID was provided.');
       }
 
-      console.log('💾 Upserting new customer with explicit ID:', customerToInsert);
+      console.log('💾 SHIELDING: Upserting customer with protected data:', customerToUpsert);
 
       const { data: upsertedCustomerData, error: upsertError } = await supabase
         .from('app_4c3a7a6153_customers')
-        .upsert(customerToInsert)
+        .upsert(customerToUpsert)
         .select();
 
       if (upsertError) {
-        // This handles cases where the DB constraint fails, e.g., a race condition on a unique column other than the PK.
         if (upsertError.code === '23505') { 
-            console.error('❌ Customer upsert failed due to unique constraint.', upsertError);
-            throw new Error('Failed to save customer data due to a conflict. A record with similar unique information (like ID, name, or license) may already exist.');
+          console.error('❌ Customer upsert failed due to unique constraint.', upsertError);
+          throw new Error('Failed to save customer data due to a conflict. A record with similar unique information may already exist.');
         }
         console.error('❌ Customer upsert failed:', upsertError);
         throw new Error(`Customer save failed: ${upsertError.message}`);
@@ -205,38 +199,25 @@ class EnhancedUnifiedCustomerService {
         throw new Error('Failed to save or retrieve customer data after operation.');
       }
 
-      // This variable is used by the verification step later in the function.
       const customerResult = upsertedCustomerData[0];
-      console.log('✅ Customer created/updated successfully:', customerResult.id);
+      console.log('✅ SHIELDING: Customer created/updated successfully:', customerResult.id);
 
-      // STEP 9: FINAL VERIFICATION - Confirm id_scan_url and phone were saved to database
+      // Step 9: FINAL VERIFICATION
       if (idScanUrl && !customerResult.id_scan_url) {
-        console.error('❌ FINAL FIX: CRITICAL ERROR - id_scan_url was not saved to database!');
-        console.error('❌ FINAL FIX: Expected:', idScanUrl);
-        console.error('❌ FINAL FIX: Actual:', customerResult.id_scan_url);
-        throw new Error('FINAL CRITICAL ERROR: id_scan_url was not saved to customer record in database!');
+        console.error('❌ SHIELDING: CRITICAL ERROR - id_scan_url was not saved to database!');
+        throw new Error('CRITICAL ERROR: id_scan_url was not saved to customer record in database!');
       }
 
-      if (phoneNumber && !customerResult.phone) {
-        console.error('❌ PHONE MAPPING FIX: CRITICAL ERROR - phone was not saved to database!');
-        console.error('❌ PHONE MAPPING FIX: Expected:', phoneNumber);
-        console.error('❌ PHONE MAPPING FIX: Actual:', customerResult.phone);
-        throw new Error('PHONE MAPPING CRITICAL ERROR: Phone number was not saved to customer record in database!');
-      }
-
-      console.log('✅ FINAL FIX: Customer save completed successfully with GUARANTEED id_scan_url + phone mapping');
-      console.log('🎯 FINAL FIX: Customer ID:', customerResult.id);
-      console.log('🖼️ FINAL FIX: Confirmed id_scan_url saved:', customerResult.id_scan_url);
-      console.log('📞 PHONE MAPPING FIX: Confirmed phone saved:', customerResult.phone);
-
+      console.log('✅ SHIELDING: Customer save completed successfully with protected manual input');
+      
       return {
         success: true,
         data: customerResult,
-        message: 'Customer saved successfully with guaranteed id_scan_url assignment and phone mapping'
+        message: 'Customer saved successfully with protected manual input'
       };
 
     } catch (error) {
-      console.error('❌ FINAL FIX: Customer save failed:', error);
+      console.error('❌ SHIELDING: Customer save failed:', error);
       
       return {
         success: false,
@@ -247,8 +228,9 @@ class EnhancedUnifiedCustomerService {
   }
 
   /**
-   * FORM AUTO-POPULATION FIX: Process Sequential Image Upload with Complete ID Scanning Workflow
-   * This function now returns extractedData in the correct format for form auto-population
+   * FORM AUTO-POPULATION: Process Sequential Image Upload with Complete ID Scanning Workflow
+   * This function returns extractedData in the correct format for form auto-population
+   * DOES NOT OVERWRITE MANUAL INPUT - only provides data for the modal to merge intelligently
    */
   static async processSequentialImageUpload(imageFile, customerId, rentalId = null, scanType = 'document') {
     try {
@@ -297,7 +279,7 @@ class EnhancedUnifiedCustomerService {
 
       console.log('🖼️ FORM AUTO-POPULATION: Generated public URL:', publicUrl);
 
-      // Step 5: Process image with ACTUAL OCR (not simulation)
+      // Step 5: Process image with ACTUAL OCR
       console.log('🔍 FORM AUTO-POPULATION: Starting ACTUAL OCR processing...');
       
       let ocrResult;
@@ -314,40 +296,39 @@ class EnhancedUnifiedCustomerService {
         };
       }
 
-      // Step 6: Save customer data with id_scan_url and phone mapping
+      // Step 6: Prepare data for form auto-population (WITHOUT saving to database yet)
       let shouldPopulateForm = false;
       let responseMessage = '';
-      let customerSaveResult = null;
       let extractedData = {}; // CRITICAL: This is what the form expects for auto-population
 
       if (ocrResult.success && ocrResult.data) {
-        console.log('🔍 FORM AUTO-POPULATION: Processing OCR data for customer save...');
+        console.log('🔍 FORM AUTO-POPULATION: Processing OCR data for form population...');
         console.log('📦 FORM AUTO-POPULATION: OCR extracted data:', JSON.stringify(ocrResult.data, null, 2));
         
-        // CRITICAL FIX: Map OCR data to form field names for auto-population
+        // Map OCR data to form field names
         extractedData = {
-          customer_name: ocrResult.data.full_name || ocrResult.data.customer_name || '',
-          customer_phone: ocrResult.data.phone || ocrResult.data.customer_phone || '',
-          customer_email: ocrResult.data.email || ocrResult.data.customer_email || '',
-          customer_dob: ocrResult.data.date_of_birth || ocrResult.data.customer_dob || '',
-          customer_nationality: ocrResult.data.nationality || ocrResult.data.customer_nationality || '',
-          customer_licence_number: ocrResult.data.licence_number || ocrResult.data.customer_licence_number || '',
-          customer_id_number: ocrResult.data.id_number || ocrResult.data.customer_id_number || '',
-          customer_place_of_birth: ocrResult.data.place_of_birth || ocrResult.data.customer_place_of_birth || '',
-          customer_issue_date: ocrResult.data.issue_date || ocrResult.data.customer_issue_date || ''
+          customer_name: ocrResult.data.full_name || '',
+          customer_email: ocrResult.data.email || '',
+          customer_phone: ocrResult.data.phone || '',
+          customer_dob: ocrResult.data.date_of_birth || '',
+          customer_nationality: ocrResult.data.nationality || '',
+          customer_licence_number: ocrResult.data.licence_number || '',
+          customer_id_number: ocrResult.data.id_number || '',
+          customer_place_of_birth: ocrResult.data.place_of_birth || '',
+          customer_issue_date: ocrResult.data.issue_date || '',
+          document_number: ocrResult.data.licence_number || ocrResult.data.id_number || '',
+          id_scan_url: publicUrl
         };
 
         console.log('🎯 FORM AUTO-POPULATION: Mapped extractedData for form:', JSON.stringify(extractedData, null, 2));
         
-        // Prepare customer data with scan result
+        // Save customer data with OCR results and image URL
         const customerDataWithScan = {
-          id: customerId, // CRITICAL FIX: Pass the customerId to the save function
+          id: customerId,
           ...ocrResult.data,
-          id_scan_url: publicUrl, // CRITICAL: Include image URL
-          scanUrl: publicUrl // Alternative field name
+          id_scan_url: publicUrl,
         };
 
-        // Create scan result object for saveCustomer function
         const scanResult = {
           file_public_url: publicUrl,
           file_path: filePath,
@@ -355,7 +336,7 @@ class EnhancedUnifiedCustomerService {
         };
 
         console.log('💾 FORM AUTO-POPULATION: Saving customer with OCR data and image URL...');
-        customerSaveResult = await this.saveCustomer(customerDataWithScan, scanResult);
+        const customerSaveResult = await this.saveCustomer(customerDataWithScan, scanResult);
 
         if (customerSaveResult.success) {
           shouldPopulateForm = true;
@@ -372,17 +353,6 @@ class EnhancedUnifiedCustomerService {
         // OCR failed, but still save the image URL to customer record if possible
         console.log('⚠️ FORM AUTO-POPULATION: OCR failed, attempting to save image URL only...');
         
-        const basicCustomerData = {
-          id_scan_url: publicUrl
-        };
-
-        const scanResult = {
-          file_public_url: publicUrl,
-          file_path: filePath,
-          success: true
-        };
-
-        // Try to update existing customer with image URL
         try {
           const { data: existingCustomer } = await supabase
             .from('app_4c3a7a6153_customers')
@@ -419,7 +389,6 @@ class EnhancedUnifiedCustomerService {
         publicUrl: publicUrl,
         filePath: filePath,
         ocrResult: ocrResult,
-        customerSaveResult: customerSaveResult,
         shouldPopulateForm: shouldPopulateForm,
         extractedData: extractedData, // CRITICAL: This is what enables form auto-population
         message: responseMessage,
@@ -483,6 +452,7 @@ class EnhancedUnifiedCustomerService {
     // Handle string fields that should be null when empty
     const stringFields = [
       'email', 'customer_email',
+      'phone', 'customer_phone',
       'nationality', 'customer_nationality',
       'licence_number', 'customer_licence_number',
       'id_number', 'customer_id_number',
@@ -810,7 +780,7 @@ class EnhancedUnifiedCustomerService {
         };
       }
 
-      // Test 4: FINAL FIX - Test id_scan_url field presence
+      // Test 4: Test id_scan_url field presence
       console.log('🔧 Testing id_scan_url field presence...');
       try {
         const { data: sampleCustomer, error: sampleError } = await supabase
@@ -838,24 +808,7 @@ class EnhancedUnifiedCustomerService {
         };
       }
 
-      // Test 5: PHONE MAPPING DEBUG - Test specific customer
-      console.log('🔧 Testing specific customer cust_1763257670216_y0at1di1c...');
-      try {
-        const debugResult = await this.debugCustomerRecord('cust_1763257670216_y0at1di1c');
-        
-        diagnostics.tests.specificCustomerDebug = {
-          status: debugResult.success ? 'PASS' : 'FAIL',
-          message: debugResult.success ? 'Customer record retrieved successfully' : debugResult.error,
-          customerData: debugResult.data || null
-        };
-      } catch (error) {
-        diagnostics.tests.specificCustomerDebug = {
-          status: 'FAIL',
-          error: error.message
-        };
-      }
-
-      // Test 6: FORM AUTO-POPULATION - Test processSequentialImageUpload function availability
+      // Test 5: Test processSequentialImageUpload function availability
       console.log('🔧 Testing processSequentialImageUpload function availability...');
       try {
         const functionExists = typeof this.processSequentialImageUpload === 'function';

@@ -60,6 +60,7 @@ const ViewCustomerDetailsDrawer = ({
             nationality: rental.nationality,
             created_at: rental.created_at,
             customer_id_image: rental.customer_id_image,
+            id_scan_url: rental.id_scan_url,
           });
         } else {
           setError('No customer data available to display.');
@@ -98,6 +99,9 @@ const ViewCustomerDetailsDrawer = ({
           dataToShow.phone = customerProfile.phone || fallbackRental.customer_phone || fallbackRental.phone;
           dataToShow.licence_number = customerProfile.licence_number || fallbackRental.customer_licence_number || fallbackRental.licence_number;
           dataToShow.nationality = customerProfile.nationality || fallbackRental.nationality;
+          // Map both image fields from customer profile OR fallback rental
+          dataToShow.customer_id_image = customerProfile.customer_id_image || fallbackRental.customer_id_image;
+          dataToShow.id_scan_url = customerProfile.id_scan_url || fallbackRental.id_scan_url;
         }
       } else if (fallbackRental) {
         // No customer profile exists. Construct a temporary profile from the latest rental data.
@@ -111,7 +115,7 @@ const ViewCustomerDetailsDrawer = ({
           nationality: fallbackRental.nationality,
           created_at: fallbackRental.created_at,
           customer_id_image: fallbackRental.customer_id_image,
-          id_scan_url: fallbackRental.customer?.id_scan_url,
+          id_scan_url: fallbackRental.id_scan_url,
         };
       } else {
         setError(`Customer with ID ${targetCustomerId} not found, and no rental history is available.`);
@@ -251,8 +255,13 @@ const ViewCustomerDetailsDrawer = ({
 
   if (!isOpen) return null;
 
+  // Parse customer_id_image: split by comma and filter out empty strings
   const idScanUrl = customerData?.id_scan_url;
-  const customerIdImage = customerData?.customer_id_image;
+  const customerIdImageRaw = customerData?.customer_id_image || '';
+  const customerIdImages = customerIdImageRaw
+    .split(',')
+    .map(url => url.trim())
+    .filter(url => url.length > 0);
   const extraImages = customerData?.extra_images || [];
 
   return (
@@ -373,12 +382,58 @@ const ViewCustomerDetailsDrawer = ({
                 ) : (<p className="text-sm text-gray-500">No rental history found.</p>)}
               </div>
 
-              {/* ID Document Scans */}
+              {/* Identity Documents Section */}
               <div className="bg-gray-50 rounded-lg p-4">
-                <h3 className="text-sm font-medium text-gray-900 mb-3 flex items-center"><Camera className="h-4 w-4 mr-2 text-blue-600" />ID Scans</h3>
-                {idScanUrl && <img src={idScanUrl} alt="ID Scan" className="w-full h-48 object-contain border rounded-lg cursor-pointer mb-2" onClick={() => window.open(idScanUrl, '_blank')} />}
-                {customerIdImage && <img src={customerIdImage} alt="ID Document" className="w-full h-48 object-contain border rounded-lg cursor-pointer" onClick={() => window.open(customerIdImage, '_blank')} />}
-                {!idScanUrl && !customerIdImage && <p className="text-sm text-gray-500">No ID documents available.</p>}
+                <h3 className="text-sm font-medium text-gray-900 mb-3 flex items-center">
+                  <FileText className="h-4 w-4 mr-2 text-blue-600" />
+                  Identity Documents
+                </h3>
+                
+                <div className="grid grid-cols-1 gap-4">
+                  {/* 1. Verified OCR Scan (id_scan_url) */}
+                  {idScanUrl && (
+                    <div className="space-y-1">
+                      <span className="text-[10px] font-black text-indigo-600 uppercase tracking-tighter ml-1">Verified OCR Scan</span>
+                      <div className="relative group overflow-hidden rounded-xl border-2 border-indigo-100 shadow-sm">
+                        <img 
+                          src={idScanUrl} 
+                          alt="OCR Scan" 
+                          className="w-full h-40 object-cover cursor-pointer hover:scale-105 transition-transform" 
+                          onClick={() => window.open(idScanUrl, '_blank')} 
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 2. Imported ID Photos (customer_id_image - multiple images) */}
+                  {customerIdImages.length > 0 && (
+                    <div className="space-y-1">
+                      <span className="text-[10px] font-black text-blue-600 uppercase tracking-tighter ml-1">
+                        Imported ID Photos ({customerIdImages.length})
+                      </span>
+                      <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                        {customerIdImages.map((url, index) => (
+                          <div key={index} className="relative group overflow-hidden rounded-xl border-2 border-blue-100 shadow-sm">
+                            <img 
+                              src={url} 
+                              alt={`Manual ID ${index + 1}`} 
+                              className="w-full h-32 object-cover cursor-pointer hover:scale-105 transition-transform" 
+                              onClick={() => window.open(url, '_blank')} 
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Empty State */}
+                  {!idScanUrl && customerIdImages.length === 0 && (
+                    <div className="flex flex-col items-center justify-center py-6 bg-white border-2 border-dashed border-gray-200 rounded-xl">
+                      <Camera className="h-6 w-6 text-gray-300 mb-1" />
+                      <p className="text-[11px] text-gray-400 font-bold uppercase">No Documents Found</p>
+                    </div>
+                  )}
+                </div>
               </div>
               
               {/* Additional Documents */}

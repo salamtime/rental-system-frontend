@@ -4,9 +4,10 @@
  * Implements comprehensive document extraction with MRZ support
  * ENHANCED: Added comprehensive debugging and raw data logging
  * SECURITY FIX: Added API key validation and removed key from logs. Validation moved from constructor to execution time.
+ * TOKEN LIMIT FIX: Increased maxOutputTokens and optimized prompt to prevent truncation
  */
 
-import { supabase } from '../../lib/supabase';
+import { supabase } from '../../lib/supabase.js';
 import unifiedCustomerService from '../UnifiedCustomerService';
 
 class GeminiVisionOCR {
@@ -205,30 +206,26 @@ class GeminiVisionOCR {
   }
 
   /**
-   * Call Google Gemini Vision API with advanced MGX prompt
+   * TOKEN LIMIT FIX: Call Google Gemini Vision API with optimized prompt and increased token limit
    */
   async callGeminiVisionAPI(base64Image, mimeType) {
     const apiUrl = `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${this.apiKey}`;
-    const mgxPrompt = `Extract identity document data as JSON only. Return this exact structure:
+    
+    // OPTIMIZED PROMPT: More concise, direct instructions to reduce thinking tokens
+    const mgxPrompt = `Extract identity document data. Output ONLY the JSON object below with extracted values. Use null for missing fields. No preamble, no explanation, just JSON.
 
-{
-  "document_type": null, "country": null, "full_name": null, "raw_name": null, "given_name": null, "family_name": null, "first_name": null, "last_name": null, "middle_name": null, "document_number": null, "nationality": null, "date_of_birth": null, "gender": null, "expiry_date": null, "issue_date": null, "place_of_birth": null, "issuing_authority": null, "mrz": null, "confidence_estimate": null, "email": null, "phone": null, "address": null, "city": null, "postal_code": null
-}
+{"document_type":null,"country":null,"full_name":null,"raw_name":null,"given_name":null,"family_name":null,"first_name":null,"last_name":null,"middle_name":null,"document_number":null,"nationality":null,"date_of_birth":null,"gender":null,"expiry_date":null,"issue_date":null,"place_of_birth":null,"issuing_authority":null,"mrz":null,"confidence_estimate":null,"email":null,"phone":null,"address":null,"city":null,"postal_code":null}
 
-Rules:
-1. Return ONLY valid JSON, no extra text
-2. Use null for missing fields
-3. Dates as YYYY-MM-DD format
-4. confidence_estimate as float 0.0-1.0
-5. For Arabic/Latin text, prefer Latin in full_name, original in raw_name
-6. Extract ALL visible text and map to appropriate fields
-7. If full_name is not clear, construct from first_name + last_name
-
-Extract from this image:`;
+Rules: Dates as YYYY-MM-DD. Confidence 0.0-1.0. Prefer Latin text in full_name, original in raw_name.`;
 
     const requestBody = {
       contents: [{ parts: [{ text: mgxPrompt }, { inlineData: { mimeType: mimeType, data: base64Image } }] }],
-      generationConfig: { temperature: 0.1, topK: 1, topP: 1, maxOutputTokens: 4096 },
+      generationConfig: { 
+        temperature: 0.1, 
+        topK: 1, 
+        topP: 1, 
+        maxOutputTokens: 8192  // TOKEN LIMIT FIX: Increased from 4096 to 8192
+      },
       safetySettings: [
         { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
         { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
@@ -279,23 +276,65 @@ Extract from this image:`;
 
       const candidate = responseData.candidates[0];
       
+      // TOKEN LIMIT FIX: Check for truncation and warn user
+      if (candidate.finishReason === 'MAX_TOKENS') {
+        console.warn('⚠️ TOKEN LIMIT WARNING: Response was truncated due to MAX_TOKENS limit');
+        console.warn('⚠️ This may result in incomplete JSON. Attempting to parse anyway...');
+      }
+      
       let content = candidate.content?.parts?.[0]?.text;
       if (!content) throw new Error('No content received from Google Gemini Vision API');
 
       console.log('📝 Raw Gemini content response:', content);
 
       try {
-        const jsonMatch = content.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) throw new Error('No JSON found in Gemini response content');
+        // TOKEN LIMIT FIX: Enhanced JSON extraction with fallback for truncated responses
+        let jsonMatch = content.match(/\{[\s\S]*\}/);
+        
+        if (!jsonMatch) {
+          // FALLBACK: Try to find incomplete JSON and attempt to close it
+          const incompleteMatch = content.match(/\{[\s\S]*/);
+          if (incompleteMatch) {
+            console.warn('⚠️ TRUNCATION DETECTED: Attempting to repair incomplete JSON...');
+            let incompleteJson = incompleteMatch[0];
+            
+            // Count open braces and try to close them
+            const openBraces = (incompleteJson.match(/\{/g) || []).length;
+            const closeBraces = (incompleteJson.match(/\}/g) || []).length;
+            const missingBraces = openBraces - closeBraces;
+            
+            if (missingBraces > 0) {
+              // Remove trailing comma if present
+              incompleteJson = incompleteJson.replace(/,\s*$/, '');
+              // Add missing closing braces
+              incompleteJson += '}'.repeat(missingBraces);
+              console.log('🔧 Repaired JSON:', incompleteJson);
+              jsonMatch = [incompleteJson];
+            }
+          }
+          
+          if (!jsonMatch) {
+            throw new Error('No JSON found in Gemini response content. Response may be truncated or invalid.');
+          }
+        }
         
         const extractedData = JSON.parse(jsonMatch[0]);
         const cleanedData = this.cleanAndValidateExtractedData(extractedData);
         
         console.log('✅ Successfully processed and cleaned extracted data:', cleanedData);
+        
+        // TOKEN LIMIT FIX: Warn if data seems incomplete
+        const nonNullFields = Object.values(cleanedData).filter(v => v !== null && v !== '').length;
+        if (nonNullFields < 3) {
+          console.warn('⚠️ WARNING: Very few fields extracted. This may indicate truncation or poor image quality.');
+        }
+        
         return cleanedData;
         
       } catch (contentParseError) {
-        throw new Error(`Invalid JSON in response content: ${contentParseError.message}`);
+        console.error('❌ JSON Parse Error:', contentParseError.message);
+        console.error('❌ Problematic content:', content);
+        throw new Error(`Invalid JSON in response content: ${contentParseError.message}. This may be due to response truncation. Try using a clearer image or contact support.`);
       }
 
     } catch (fetchError) {

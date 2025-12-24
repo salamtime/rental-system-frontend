@@ -15,6 +15,9 @@ import { supabase } from '../lib/supabase.js';
  * - CRITICAL FIX: UUID parameter validation to prevent availability check failures
  * - FINAL CRITICAL FIX: Guaranteed customer_id foreign key assignment during rental creation
  * - TRANSACTIONAL CUSTOMER CREATION: Enforced customer creation sequence before rental creation
+ * - AUTHORITY LOGIC: Form data takes precedence over database data for contact fields
+ * - HEALING FIX: Master customer record updated with correct contact info after rental creation
+ * - FINAL SANITIZATION FIX: Protected customer contact fields from final null conversion
  */
 class TransactionalRentalService {
   
@@ -175,7 +178,7 @@ class TransactionalRentalService {
     }
 
     // Check if it's already in YYYY-MM-DD format
-    const isoDateRegex = /^\\\d{4}-\\\d{2}-\\\d{2}$/;
+    const isoDateRegex = /^\d{4}-\d{2}-\d{2}$/;
     if (isoDateRegex.test(dateValue)) {
       // Validate that it's a real date
       const date = new Date(dateValue);
@@ -367,14 +370,14 @@ class TransactionalRentalService {
   }
 
   /**
-   * FIXED: Sanitizes rental data by validating and formatting all fields
+   * Sanitizes rental data by validating and formatting all fields
    * @param {Object} rentalData - The rental data to sanitize
    * @returns {Object} - Sanitized rental data
    */
   static sanitizeRentalData(rentalData) {
     const sanitized = { ...rentalData };
 
-    console.log('🧹 FIXED: Starting comprehensive data sanitization for:', rentalData);
+    console.log('🧹 Starting comprehensive data sanitization for:', rentalData);
 
     // List of ALL possible date fields that need validation (convert empty strings to null)
     const dateFields = [
@@ -412,9 +415,8 @@ class TransactionalRentalService {
       }
     });
 
-    // FIXED: Handle ALL string fields that should be null when empty
+    // Handle string fields that should be null when empty
     const stringFields = [
-      'customer_email', 
       'customer_licence_number', 
       'customer_id_number', 
       'customer_place_of_birth',
@@ -429,6 +431,22 @@ class TransactionalRentalService {
         console.log(`📧 FIXED: Empty string field '${field}': '${originalValue}' -> null`);
       }
     });
+
+    // Preserve customer contact fields as-is (they will be handled by Authority Logic)
+    if ('customer_email' in rentalData) {
+      sanitized.customer_email = rentalData.customer_email;
+      console.log(`📧 Preserved customer_email: '${sanitized.customer_email}'`);
+    }
+    
+    if ('customer_phone' in rentalData) {
+      sanitized.customer_phone = rentalData.customer_phone;
+      console.log(`📞 Preserved customer_phone: '${sanitized.customer_phone}'`);
+    }
+
+    if ('customer_name' in rentalData) {
+      sanitized.customer_name = rentalData.customer_name;
+      console.log(`👤 Preserved customer_name: '${sanitized.customer_name}'`);
+    }
 
     // FIXED: Validate status fields against database constraints
     if ('payment_status' in sanitized) {
@@ -462,7 +480,7 @@ class TransactionalRentalService {
       }
     });
 
-    console.log('✅ FIXED: Comprehensive data sanitization completed:', sanitized);
+    console.log('✅ Comprehensive data sanitization completed:', sanitized);
     return sanitized;
   }
 
@@ -540,6 +558,8 @@ class TransactionalRentalService {
 
   /**
    * FINAL CRITICAL FIX: Create rental with GUARANTEED customer_id foreign key assignment
+   * AUTHORITY LOGIC: Form data takes precedence over database data
+   * HEALING FIX: Master customer record updated after successful rental creation
    */
   static async createRentalWithTransaction(rentalData) {
     console.log('🆕 FINAL CRITICAL FIX: Starting rental creation with GUARANTEED customer_id linkage:', rentalData);
@@ -571,7 +591,7 @@ class TransactionalRentalService {
       console.log('🔍 FINAL CRITICAL FIX: Verifying customer exists in database...');
       const { data: existingCustomer, error: customerError } = await supabase
         .from('app_4c3a7a6153_customers')
-        .select('id, full_name, licence_number, id_number')
+        .select('id, full_name, licence_number, id_number, phone, email')
         .eq('id', linkedCustomerId)
         .single();
 
@@ -584,12 +604,35 @@ class TransactionalRentalService {
         id: existingCustomer.id,
         name: existingCustomer.full_name,
         licence_number: existingCustomer.licence_number,
-        id_number: existingCustomer.id_number
+        id_number: existingCustomer.id_number,
+        phone: existingCustomer.phone,
+        email: existingCustomer.email
       });
 
-      // STEP 4: Sanitize and validate all fields AFTER customer verification
+      // STEP 3.5: AUTHORITY LOGIC - Form data takes precedence over database
+      console.log('🎯 AUTHORITY LOGIC: Prioritizing form data over database...');
+      console.log('🎯 Form data - phone:', rentalData.customer_phone, 'email:', rentalData.customer_email);
+      console.log('🎯 Database data - phone:', existingCustomer.phone, 'email:', existingCustomer.email);
+      
+      const finalEmail = (rentalData.customer_email && rentalData.customer_email.trim() !== '') 
+          ? rentalData.customer_email 
+          : existingCustomer?.email;
+      
+      const finalPhone = (rentalData.customer_phone && rentalData.customer_phone.trim() !== '') 
+          ? rentalData.customer_phone 
+          : existingCustomer?.phone;
+      
+      // Update rental data with prioritized values
+      rentalData.customer_email = finalEmail;
+      rentalData.customer_phone = finalPhone;
+      
+      console.log('🎯 AUTHORITY LOGIC: Final values - phone:', finalPhone, 'email:', finalEmail);
+
+      // STEP 4: Sanitize and validate all fields AFTER authority logic
       const sanitizedData = this.sanitizeRentalData(rentalData);
-      console.log('🧹 FIXED: Sanitized data ready for database:', sanitizedData);
+      console.log('🧹 Sanitized data ready for database:', sanitizedData);
+      console.log('📧 Verified customer_email preserved:', sanitizedData.customer_email);
+      console.log('📞 Verified customer_phone preserved:', sanitizedData.customer_phone);
 
       // STEP 5: Retrieve customer primary identifier for display linkage
       let linkedDisplayId = null;
@@ -622,6 +665,8 @@ class TransactionalRentalService {
 
       console.log('🔧 FINAL CRITICAL FIX: Final mapped rental data with GUARANTEED customer_id:', dbRentalData);
       console.log('🎯 FINAL CRITICAL FIX: customer_id field confirmed:', dbRentalData.customer_id);
+      console.log('📧 customer_email field confirmed:', dbRentalData.customer_email);
+      console.log('📞 customer_phone field confirmed:', dbRentalData.customer_phone);
       console.log('🔗 LINKAGE FIX: linked_display_id field set to:', dbRentalData.linked_display_id);
       
       // STEP 7: Final validation - ensure required fields are present
@@ -671,14 +716,24 @@ class TransactionalRentalService {
       // ============================================================================
       const finalSanitizedData = { ...dbRentalData };
 
+      // CRITICAL: Define protected fields that should NEVER be converted to null
+      const protectedFields = ['customer_email', 'customer_phone', 'customer_name'];
+
       // 1. Convert ALL empty strings to NULL (Fixes "invalid input syntax for type time")
+      // BUT preserve protected customer contact fields
       Object.keys(finalSanitizedData).forEach(key => {
+        // FINAL SANITIZATION FIX: Skip protected fields completely
+        if (protectedFields.includes(key)) {
+          console.log(`🛡️ FINAL SANITIZATION: Protecting ${key}:`, finalSanitizedData[key]);
+          return; // Skip this iteration, don't modify protected fields
+        }
+        
         if (finalSanitizedData[key] === "" || finalSanitizedData[key] === undefined) {
           finalSanitizedData[key] = null;
         }
       });
 
-      console.log('🧼 SANITIZED DATA:', JSON.stringify(finalSanitizedData, null, 2));
+      console.log('🧼 FINAL SANITIZED DATA:', JSON.stringify(finalSanitizedData, null, 2));
 
       const { data: rental, error: insertError } = await supabase
         .from('app_4c3a7a6153_rentals')
@@ -717,12 +772,32 @@ class TransactionalRentalService {
       
       console.log('✅ FINAL CRITICAL FIX: Rental created successfully with GUARANTEED customer_id linkage:', rental);
       console.log('🎯 FINAL CRITICAL FIX: Confirmed customer_id saved to database:', rental.customer_id);
+      console.log('📧 Confirmed customer_email saved to database:', rental.customer_email);
+      console.log('📞 Confirmed customer_phone saved to database:', rental.customer_phone);
       console.log('🔗 LINKAGE FIX: Rental linked_display_id stored as:', rental.linked_display_id);
+      
+      // STEP 10: HEALING FIX - Update master customer record with correct contact info
+      if (finalEmail || finalPhone) {
+        console.log('🏥 HEALING FIX: Updating master customer record with correct contact info...');
+        const { error: updateError } = await supabase
+          .from('app_4c3a7a6153_customers')
+          .update({ 
+            email: finalEmail, 
+            phone: finalPhone 
+          })
+          .eq('id', linkedCustomerId);
+        
+        if (updateError) {
+          console.warn('⚠️ HEALING FIX: Failed to update customer record:', updateError.message);
+        } else {
+          console.log('✅ HEALING FIX: Master customer record updated successfully');
+        }
+      }
       
       return {
         success: true,
         data: rental,
-        message: 'Rental created successfully with GUARANTEED customer ID linkage'
+        message: 'Rental created successfully with GUARANTEED customer ID linkage and protected customer data'
       };
       
     } catch (error) {
@@ -1162,7 +1237,8 @@ class TransactionalRentalService {
           customer_dob: '',
           rental_start_date: '2024-11-15',
           rental_end_date: '',
-          customer_email: '   ',
+          customer_email: 'test@example.com',
+          customer_phone: '+212600000000',
           accessories: '',
           payment_status: 'pending', // This should be converted to 'unpaid'
           rental_status: 'scheduled'

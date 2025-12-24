@@ -123,29 +123,24 @@ export default function RentalDetails() {
         throw new Error("Invoice template could not be found.");
       }
 
-      // FIXED: Reduce canvas scale to minimize PDF size
-      console.log('📄 Generating PDF with optimized settings...');
+      // OPTIMIZED: Further reduced settings for minimal PDF size
+      console.log('📄 Generating PDF with maximum optimization...');
       const canvas = await html2canvas(invoiceElement, { 
-        scale: 1.5, // REDUCED from 2 to 1.5 for smaller file size
+        scale: 1, // REDUCED from 1.5 to 1 (Standard resolution)
         useCORS: true,
         logging: false,
         imageTimeout: 0
       });
       
-      const imgData = canvas.toDataURL('image/jpeg', 0.85); // CHANGED to JPEG with 85% quality for smaller size
-      const pdf = new jsPDF({
-        orientation: 'p',
-        unit: 'mm',
-        format: 'a4',
-        compress: true // ADDED: Enable PDF compression
-      });
+      const imgData = canvas.toDataURL('image/jpeg', 0.5); // Lowered quality to 50% (from 85%)
+      const pdf = new jsPDF('p', 'mm', 'a4', true); // The 'true' here enables compression
 
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight); // CHANGED from PNG to JPEG
+      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight);
       const pdfBlob = pdf.output('blob');
 
-      // ADDED: Check PDF size before upload
+      // Check PDF size before upload
       const pdfSizeMB = (pdfBlob.size / (1024 * 1024)).toFixed(2);
       console.log(`📊 Generated PDF size: ${pdfSizeMB} MB`);
 

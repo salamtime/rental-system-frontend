@@ -8,7 +8,10 @@ const BUCKET_NAME = 'vehicle-documents';
  */
 export const uploadDocument = async (file, vehicleId) => {
   try {
-    console.log('🔄 DocumentService: Starting document upload:', file.name);
+    // Log file size for debugging
+    const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+    console.log(`🔄 DocumentService: Starting document upload: ${file.name}`);
+    console.log(`📊 File size: ${fileSizeMB} MB`);
     
     // Validate file
     validateDocumentFile(file);
@@ -193,9 +196,12 @@ const getCategoryFromType = (type) => {
 
 /**
  * Validate document file before upload
+ * FIXED: Increased limit from 10MB to 50MB to match Supabase default
  */
 const validateDocumentFile = (file) => {
-  const maxSize = 10 * 1024 * 1024; // 10MB
+  const maxSize = 50 * 1024 * 1024; // 50MB (FIXED: was 10MB)
+  const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+  
   const allowedTypes = [
     'application/pdf',
     'application/msword',
@@ -210,7 +216,7 @@ const validateDocumentFile = (file) => {
   ];
 
   if (file.size > maxSize) {
-    throw new Error(`Document ${file.name} is too large. Maximum size is 10MB.`);
+    throw new Error(`Document ${file.name} is too large (${fileSizeMB} MB). Maximum size is 50 MB. Please compress the file and try again.`);
   }
 
   if (!allowedTypes.includes(file.type)) {

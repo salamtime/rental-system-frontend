@@ -123,20 +123,39 @@ export default function RentalDetails() {
         throw new Error("Invoice template could not be found.");
       }
 
-      const canvas = await html2canvas(invoiceElement, { scale: 2, useCORS: true });
-      const imgData = canvas.toDataURL('image/png');
+      // FIXED: Reduce canvas scale to minimize PDF size
+      console.log('📄 Generating PDF with optimized settings...');
+      const canvas = await html2canvas(invoiceElement, { 
+        scale: 1.5, // REDUCED from 2 to 1.5 for smaller file size
+        useCORS: true,
+        logging: false,
+        imageTimeout: 0
+      });
+      
+      const imgData = canvas.toDataURL('image/jpeg', 0.85); // CHANGED to JPEG with 85% quality for smaller size
       const pdf = new jsPDF({
         orientation: 'p',
         unit: 'mm',
         format: 'a4',
+        compress: true // ADDED: Enable PDF compression
       });
 
       const pdfWidth = pdf.internal.pageSize.getWidth();
       const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-      pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
+      pdf.addImage(imgData, 'JPEG', 0, 0, pdfWidth, pdfHeight); // CHANGED from PNG to JPEG
       const pdfBlob = pdf.output('blob');
 
+      // ADDED: Check PDF size before upload
+      const pdfSizeMB = (pdfBlob.size / (1024 * 1024)).toFixed(2);
+      console.log(`📊 Generated PDF size: ${pdfSizeMB} MB`);
+
+      if (pdfBlob.size > 50 * 1024 * 1024) {
+        throw new Error(`PDF size (${pdfSizeMB} MB) exceeds the maximum allowed size of 50 MB. Please try reducing the invoice content or contact support.`);
+      }
+
       const filePath = `invoices/${rental.id}_${Date.now()}.pdf`;
+      console.log(`📤 Uploading PDF to Supabase: ${filePath}`);
+      
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('invoices')
         .upload(filePath, pdfBlob, {
@@ -145,8 +164,11 @@ export default function RentalDetails() {
         });
 
       if (uploadError) {
+        console.error('❌ Upload error details:', uploadError);
         throw new Error(`PDF Upload Error: ${uploadError.message}`);
       }
+
+      console.log('✅ PDF uploaded successfully');
 
       const { data: publicUrlData } = supabase.storage
         .from('invoices')
@@ -173,8 +195,19 @@ export default function RentalDetails() {
       window.open(whatsappUrl, '_blank');
 
     } catch (err) {
-      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
-      alert(`Failed to share via WhatsApp. Error: ${err.message}`);
+      console.error('❌ Share via WhatsApp Error:', err);
+      console.error('❌ Error details:', { message: err.message, stack: err.stack });
+      
+      let errorMessage = `Failed to share via WhatsApp. Error: ${err.message}`;
+      
+      // Provide helpful suggestions based on error type
+      if (err.message.includes('exceeded the maximum allowed size')) {
+        errorMessage += '\n\nSuggestion: The invoice PDF is too large. Try:\n1. Reducing the invoice content\n2. Removing unnecessary images\n3. Contact support for assistance';
+      } else if (err.message.includes('network') || err.message.includes('timeout')) {
+        errorMessage += '\n\nSuggestion: Network issue detected. Please check your internet connection and try again.';
+      }
+      
+      alert(errorMessage);
     } finally {
       setIsSharing(false);
     }

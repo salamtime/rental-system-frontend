@@ -141,7 +141,7 @@ export default function RentalDetails() {
         .from('invoices')
         .upload(filePath, pdfBlob, {
           contentType: 'application/pdf',
-          upsert: false,
+          upsert: true,
         });
 
       if (uploadError) {
@@ -456,7 +456,7 @@ export default function RentalDetails() {
 
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from(bucketName)
-        .upload(filename, videoFile.blob, { upsert: false });
+        .upload(filename, videoFile.blob, { upsert: true });
 
       if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
 

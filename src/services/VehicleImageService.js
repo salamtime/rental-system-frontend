@@ -93,7 +93,7 @@ class VehicleImageService {
         .from(this.BUCKET_NAME)
         .upload(fullPath, file, {
           cacheControl: '3600',
-          upsert: false,
+          upsert: true,
           contentType: file.type
         });
 

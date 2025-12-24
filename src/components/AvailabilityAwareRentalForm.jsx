@@ -707,7 +707,7 @@ const AvailabilityAwareRentalForm = ({
           .from('customer-documents')
           .upload(filePath, file, {
             cacheControl: '3600',
-            upsert: false,
+            upsert: true, // FIXED: Changed from false to true for Vercel compatibility
           });
 
         if (uploadError) {

@@ -174,7 +174,7 @@ const VehicleRefillModal = ({ isOpen, onClose, onSuccess }) => {
         .from('fuel-invoices')
         .upload(filePath, file, {
           cacheControl: '3600',
-          upsert: false
+          upsert: true
         });
 
       if (uploadError) {

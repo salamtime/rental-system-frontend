@@ -3,7 +3,8 @@ import { supabase } from '../lib/supabase';
 const BUCKET_NAME = 'vehicle-documents';
 
 /**
- * Upload a document to Supabase storage (same pattern as imageUpload.js)
+ * Upload a document to Supabase storage - DIRECT CLIENT UPLOAD (Vercel-compatible)
+ * Uses upsert: true to prevent 400 errors on duplicate filenames
  */
 export const uploadDocument = async (file, vehicleId) => {
   try {
@@ -20,12 +21,13 @@ export const uploadDocument = async (file, vehicleId) => {
     
     console.log('📁 Uploading to path:', fileName);
     
-    // Upload file directly to Supabase storage (same approach as imageUpload.js)
+    // CRITICAL FIX: Upload file directly to Supabase storage with upsert: true
+    // This bypasses any API routes and prevents Vercel's 4.5MB payload limit
     const { data, error } = await supabase.storage
       .from(BUCKET_NAME)
       .upload(fileName, file, {
         cacheControl: '3600',
-        upsert: false,
+        upsert: true, // ADDED: Prevent 400 errors on duplicate filenames
         contentType: file.type
       });
 

@@ -262,7 +262,7 @@ class EnhancedUnifiedCustomerService {
         .from('id_scans')
         .upload(filePath, imageFile, {
           cacheControl: '3600',
-          upsert: false
+          upsert: true
         });
 
       if (uploadError) {

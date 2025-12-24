@@ -222,7 +222,7 @@ const MediaCapture = ({
           .from(bucketName)
           .upload(fileName, file, {
             cacheControl: '3600',
-            upsert: false
+            upsert: true
           });
 
         if (uploadError) {

@@ -7,6 +7,8 @@ import { Badge } from '../../components/ui/badge';
 import { Separator } from '../../components/ui/separator';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../../components/ui/dialog';
 import { Alert, AlertDescription } from '../../components/ui/alert';
+import { Input } from '../../components/ui/input';
+import { Label } from '../../components/ui/label';
 import RentalVideos from '../../components/RentalVideos';
 import ViewCustomerDetailsDrawer from '../../components/admin/ViewCustomerDetailsDrawer';
 import RentalContract from '../../components/admin/RentalContract'; // Import the contract component
@@ -31,7 +33,9 @@ import {
   User,
   Users,
   CreditCard,
-  FileSignature
+  FileSignature,
+  Edit,
+  Phone
 } from 'lucide-react';
 import { FaWhatsapp } from 'react-icons/fa';
 import html2canvas from 'html2canvas';
@@ -51,6 +55,7 @@ export default function RentalDetails() {
   const [openingModalOpen, setOpeningModalOpen] = useState(false);
   const [closingModalOpen, setClosingModalOpen] = useState(false);
   const [secondDriverModalOpen, setSecondDriverModalOpen] = useState(false);
+  const [phoneEditModalOpen, setPhoneEditModalOpen] = useState(false);
   
   const [capturedFiles, setCapturedFiles] = useState([]);
   
@@ -61,6 +66,7 @@ export default function RentalDetails() {
   const [isUploading, setIsUploading] = useState(false);
   
   const [isUpdatingPayment, setIsUpdatingPayment] = useState(false);
+  const [isUpdatingPhone, setIsUpdatingPhone] = useState(false);
   
   const [isProcessingVideo, setIsProcessingVideo] = useState(false);
   
@@ -69,6 +75,8 @@ export default function RentalDetails() {
 
   const [logoUrl, setLogoUrl] = useState(null);
   const [stampUrl, setStampUrl] = useState(null);
+  
+  const [editedPhone, setEditedPhone] = useState('');
 
   const [customerDetailsDrawer, setCustomerDetailsDrawer] = useState({
     isOpen: false,
@@ -110,6 +118,45 @@ export default function RentalDetails() {
     });
   }, []);
 
+  const handleOpenPhoneEdit = () => {
+    setEditedPhone(rental?.customer_phone || '');
+    setPhoneEditModalOpen(true);
+  };
+
+  const handleSavePhone = async () => {
+    if (!editedPhone || editedPhone.trim() === '') {
+      alert('Please enter a valid phone number');
+      return;
+    }
+
+    setIsUpdatingPhone(true);
+    try {
+      const { data, error } = await supabase
+        .from('app_4c3a7a6153_rentals')
+        .update({
+          customer_phone: editedPhone.trim(),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', rental.id)
+        .select(`
+          *,
+          vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(*)
+        `)
+        .single();
+
+      if (error) throw error;
+
+      setRental(data);
+      setPhoneEditModalOpen(false);
+      alert('✅ Phone number updated successfully!');
+    } catch (err) {
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
+      alert(`Failed to update phone number. Error: ${err.message}`);
+    } finally {
+      setIsUpdatingPhone(false);
+    }
+  };
+
   const handleShareViaWhatsApp = async () => {
     if (!rental?.customer_phone) {
       alert("Customer phone number is not available.");
@@ -117,6 +164,10 @@ export default function RentalDetails() {
     }
 
     setIsSharing(true);
+    
+    // Open WhatsApp window immediately to avoid popup blocker
+    const whatsappWindow = window.open('', '_blank');
+    
     try {
       const invoiceElement = invoiceRef.current;
       if (!invoiceElement) {
@@ -182,16 +233,27 @@ export default function RentalDetails() {
       const invoiceUrlWithCacheBust = `${invoiceUrl}${cacheBuster}`;
       const videoUrlWithCacheBust = videoUrl !== 'Not available' ? `${videoUrl}${cacheBuster}` : 'Not available';
 
-      const message = `Hello ${rental.customer_name},\\n\\nPlease find your rental documents below:\\n\\nInvoice: ${invoiceUrlWithCacheBust}\\nVehicle Video: ${videoUrlWithCacheBust}\\n\\nThank you for choosing our service!`;
+      // Use proper line break encoding for WhatsApp (%0A)
+      const message = `Hello ${rental.customer_name},%0A%0APlease find your rental documents below:%0A%0AInvoice: ${invoiceUrlWithCacheBust}%0AVehicle Video: ${videoUrlWithCacheBust}%0A%0AThank you for choosing our service!`;
       
-      const encodedMessage = encodeURIComponent(message);
-      const whatsappUrl = `https://wa.me/${rental.customer_phone.replace(/[^0-9]/g, '')}?text=${encodedMessage}`;
+      const whatsappUrl = `https://wa.me/${rental.customer_phone.replace(/[^0-9]/g, '')}?text=${message}`;
 
-      window.open(whatsappUrl, '_blank');
+      // Update the already-opened window with the WhatsApp URL
+      if (whatsappWindow) {
+        whatsappWindow.location.href = whatsappUrl;
+      } else {
+        // Fallback if window was blocked
+        window.location.href = whatsappUrl;
+      }
 
     } catch (err) {
       console.error('❌ Share via WhatsApp Error:', err);
       console.error('❌ Error details:', { message: err.message, stack: err.stack });
+      
+      // Close the blank window if there was an error
+      if (whatsappWindow) {
+        whatsappWindow.close();
+      }
       
       let errorMessage = `Failed to share via WhatsApp. Error: ${err.message}`;
       
@@ -653,26 +715,6 @@ export default function RentalDetails() {
           <ArrowLeft className="w-4 h-4 mr-2" />
           Back to Rentals
         </Button>
-        <div className="hidden sm:flex gap-2">
-            <Button onClick={handlePrintContract} variant="outline">
-              <Printer className="w-4 h-4 mr-2" />
-              Print Contract
-            </Button>
-            <Button onClick={handlePrintInvoice} className="bg-blue-600 text-white hover:bg-blue-700">
-              <Printer className="w-4 h-4 mr-2" />
-              Print Invoice
-            </Button>
-            <Button onClick={() => setIsSigning(true)} disabled={rental.contract_signed || !!rental.signature_url}>
-                <FileSignature className="w-4 h-4 mr-2" />
-                {rental.contract_signed || !!rental.signature_url ? 'Contract Signed' : 'Sign Contract'}
-            </Button>
-            {rental?.customer_phone && (
-              <Button onClick={handleShareViaWhatsApp} disabled={isSharing} className="bg-green-600 text-white hover:bg-green-700 flex items-center gap-2">
-                  <FaWhatsapp size={18} />
-                  {isSharing ? 'Sharing...' : 'Share via WhatsApp'}
-              </Button>
-            )}
-        </div>
       </div>
 
       <Card className="mb-6">
@@ -713,9 +755,28 @@ export default function RentalDetails() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 mt-2 text-sm sm:text-base">
               <p><strong>Full Name:</strong> {rental.customer_name}</p>
               <p><strong>Email:</strong> {rental.customer_email}</p>
-              <p><strong>Phone:</strong> {rental.customer_phone}</p>
+              <div className="flex items-center gap-2">
+                <p><strong>Phone:</strong> {rental.customer_phone || '—'}</p>
+                <Button 
+                  onClick={handleOpenPhoneEdit} 
+                  size="sm" 
+                  variant="ghost" 
+                  className="h-6 px-2 text-blue-600 hover:text-blue-800 hover:bg-blue-50"
+                >
+                  <Edit className="w-3 h-3 mr-1" />
+                  {rental.customer_phone ? 'Edit' : 'Add'}
+                </Button>
+              </div>
               <p><strong>ID/License:</strong> {'N/A'}</p>
             </div>
+            {!rental?.customer_phone && (
+              <Alert className="mt-3 bg-yellow-50 border-yellow-200">
+                <AlertTriangle className="h-4 w-4 text-yellow-600" />
+                <AlertDescription className="text-yellow-800 text-sm">
+                  Phone number is required for WhatsApp sharing. Click "Add" to add the customer's phone number.
+                </AlertDescription>
+              </Alert>
+            )}
           </div>
           {hasSecondDriver && (
             <>
@@ -864,6 +925,39 @@ export default function RentalDetails() {
         </DialogContent>
       </Dialog>
 
+      <Dialog open={phoneEditModalOpen} onOpenChange={setPhoneEditModalOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Phone className="w-5 h-5" />
+              {rental?.customer_phone ? 'Edit Phone Number' : 'Add Phone Number'}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="phone">Phone Number</Label>
+              <Input
+                id="phone"
+                type="tel"
+                placeholder="+212 6XX XXX XXX"
+                value={editedPhone}
+                onChange={(e) => setEditedPhone(e.target.value)}
+                className="mt-2"
+              />
+              <p className="text-sm text-gray-500 mt-2">
+                Enter the customer's phone number with country code (e.g., +212 6XX XXX XXX)
+              </p>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setPhoneEditModalOpen(false)}>Cancel</Button>
+              <Button onClick={handleSavePhone} disabled={isUpdatingPhone} className="bg-blue-600 hover:bg-blue-700 text-white">
+                {isUpdatingPhone ? 'Saving...' : 'Save'}
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       <SignaturePadModal
         isOpen={isSigning}
         onClose={() => setIsSigning(false)}
@@ -917,12 +1011,8 @@ export default function RentalDetails() {
             </>
           )}
         </div>
-        {/* Document & Payment Buttons */}
+        {/* Document & Sign Buttons */}
         <div className="flex justify-center gap-2">
-          <Button onClick={handlePrintContract} variant="outline" className="flex-1">
-            <Printer className="w-4 h-4 mr-1" />
-            Contract
-          </Button>
           <Button onClick={handlePrintInvoice} className="flex-1 bg-blue-600 text-white hover:bg-blue-700">
             <Printer className="w-4 h-4 mr-1" />
             Invoice
@@ -936,6 +1026,7 @@ export default function RentalDetails() {
             {rental.contract_signed || !!rental.signature_url ? 'Signed' : 'Sign'}
           </Button>
         </div>
+        {/* Payment & Share Buttons */}
         <div className="flex gap-2">
             {rental.payment_status?.toLowerCase() !== 'paid' && (
                 <Button 

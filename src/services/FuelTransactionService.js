@@ -13,7 +13,7 @@ class FuelTransactionService {
       id: 'default',
       name: 'Main Tank',
       capacity: 1000, // 1000L capacity
-      initial_volume: 0, // Start with 0L (empty tank)
+      initial_volume: 500, // Start with 500L
       created_at: new Date().toISOString()
     };
   }
@@ -259,7 +259,7 @@ class FuelTransactionService {
 
   // Calculate current tank volume - only tank refills affect tank volume
   calculateCurrentVolume(tankData, refills, withdrawals) {
-    const initialVolume = parseFloat(tankData?.initial_volume) || 0;
+    const initialVolume = parseFloat(tankData?.initial_volume) || 500;
     
     // Sum ONLY tank refills (transaction_type === 'tank_refill')
     const tankRefillsTotal = refills
@@ -320,7 +320,6 @@ class FuelTransactionService {
         odometer_reading: refill.odometer_reading || null,
         notes: refill.notes || '',
         filled_by: refill.refilled_by || refill.filled_by || '', // Support both field names
-        created_by: refill.refilled_by || refill.filled_by || '', // Add created_by for ownership check
         vehicle_id: refill.vehicle_id,
         saharax_0u4w4d_vehicles: refill.saharax_0u4w4d_vehicles || null,
         created_at: refill.created_at,
@@ -342,7 +341,6 @@ class FuelTransactionService {
         odometer_reading: withdrawal.odometer_reading || null,
         notes: withdrawal.notes || '',
         filled_by: withdrawal.filled_by || '',
-        created_by: withdrawal.filled_by || '', // Add created_by for ownership check
         vehicle_id: withdrawal.vehicle_id,
         saharax_0u4w4d_vehicles: withdrawal.vehicle || null,
         created_at: withdrawal.created_at,
@@ -587,191 +585,6 @@ class FuelTransactionService {
 
     } catch (error) {
       console.error('❌ Unexpected error creating transaction:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  /**
-   * Update an existing transaction
-   * @param {string} id - Transaction ID (database ID, not prefixed)
-   * @param {object} transactionData - Transaction data to update
-   * @returns {Promise<{success: boolean, transaction?: object, error?: string}>}
-   */
-  async updateTransaction(id, transactionData) {
-    try {
-      console.log('✏️ Updating transaction:', { id, transactionData });
-      
-      const { transaction_type } = transactionData;
-
-      if (transaction_type === 'withdrawal') {
-        // Update fuel_withdrawals table
-        const withdrawalData = {
-          vehicle_id: transactionData.vehicle_id,
-          liters_taken: parseFloat(transactionData.amount),
-          withdrawal_date: transactionData.transaction_date,
-          odometer_reading: transactionData.odometer_reading ? parseInt(transactionData.odometer_reading) : null,
-          filled_by: transactionData.filled_by || 'System',
-          notes: transactionData.notes || null
-        };
-
-        console.log('💾 Updating withdrawal:', withdrawalData);
-
-        const { data, error } = await supabase
-          .from(this.fuelWithdrawalsTable)
-          .update(withdrawalData)
-          .eq('id', id)
-          .select(`
-            *,
-            vehicle:${this.vehiclesTable} (
-              id,
-              name,
-              plate_number
-            )
-          `)
-          .single();
-
-        if (error) {
-          console.error('❌ Error updating withdrawal:', error);
-          return { success: false, error: error.message };
-        }
-
-        console.log('✅ Withdrawal updated successfully:', data);
-        return { success: true, transaction: data };
-
-      } else if (transaction_type === 'tank_refill') {
-        // Update fuel_refills table (tank refills)
-        const refillData = {
-          liters_added: parseFloat(transactionData.amount),
-          total_cost: transactionData.cost ? parseFloat(transactionData.cost) : null,
-          unit_price: transactionData.cost && transactionData.amount ? 
-            parseFloat(transactionData.cost) / parseFloat(transactionData.amount) : null,
-          fuel_type: transactionData.fuel_type || 'gasoline',
-          refill_date: transactionData.transaction_date,
-          fuel_station: transactionData.fuel_station || 'Main Station',
-          location: transactionData.location || '',
-          refilled_by: transactionData.filled_by || 'System',
-          notes: transactionData.notes || null,
-          invoice_image: transactionData.invoice_image || null
-        };
-
-        console.log('💾 Updating tank refill:', refillData);
-
-        const { data, error } = await supabase
-          .from(this.fuelRefillsTable)
-          .update(refillData)
-          .eq('id', id)
-          .select('*')
-          .single();
-
-        if (error) {
-          console.error('❌ Error updating tank refill:', error);
-          return { success: false, error: error.message };
-        }
-
-        console.log('✅ Tank refill updated successfully:', data);
-        return { success: true, transaction: data };
-
-      } else if (transaction_type === 'vehicle_refill') {
-        // Update vehicle_fuel_refills table (vehicle refills)
-        const vehicleRefillData = {
-          vehicle_id: transactionData.vehicle_id,
-          liters_added: parseFloat(transactionData.amount),
-          total_cost: transactionData.cost ? parseFloat(transactionData.cost) : null,
-          unit_price: transactionData.cost && transactionData.amount ? 
-            parseFloat(transactionData.cost) / parseFloat(transactionData.amount) : null,
-          fuel_type: transactionData.fuel_type || 'gasoline',
-          refill_date: transactionData.transaction_date,
-          fuel_station: transactionData.fuel_station || 'Direct Fill',
-          location: transactionData.location || '',
-          odometer_reading: transactionData.odometer_reading ? parseInt(transactionData.odometer_reading) : null,
-          refilled_by: transactionData.filled_by || 'System',
-          notes: transactionData.notes || null,
-          invoice_image: transactionData.invoice_image || null
-        };
-
-        console.log('💾 Updating vehicle refill:', vehicleRefillData);
-
-        const { data, error } = await supabase
-          .from(this.vehicleFuelRefillsTable)
-          .update(vehicleRefillData)
-          .eq('id', id)
-          .select(`
-            *,
-            ${this.vehiclesTable} (
-              id,
-              name,
-              plate_number
-            )
-          `)
-          .single();
-
-        if (error) {
-          console.error('❌ Error updating vehicle refill:', error);
-          return { success: false, error: error.message };
-        }
-
-        console.log('✅ Vehicle refill updated successfully:', data);
-        return { success: true, transaction: data };
-      }
-
-      return { success: false, error: 'Invalid transaction type' };
-
-    } catch (error) {
-      console.error('❌ Unexpected error updating transaction:', error);
-      return { success: false, error: error.message };
-    }
-  }
-
-  /**
-   * Delete a transaction (owner-only)
-   * @param {string} id - Transaction ID (e.g., "refill-123" or "withdrawal-456")
-   * @param {string} type - Transaction type: 'tank_refill', 'vehicle_refill', or 'withdrawal'
-   * @param {string} currentUserId - Current user's ID for ownership verification
-   * @returns {Promise<{success: boolean, error?: string}>}
-   */
-  async deleteTransaction(id, type, currentUserId) {
-    try {
-      console.log('🗑️ Deleting transaction:', { id, type, currentUserId });
-
-      if (!currentUserId) {
-        throw new Error('User must be authenticated to delete transactions');
-      }
-
-      // Extract the actual database ID from the prefixed ID
-      const dbId = id.replace(/^(refill|withdrawal)-/, '');
-      
-      // Determine the table based on transaction type
-      let tableName;
-      
-      if (type === 'tank_refill') {
-        tableName = this.fuelRefillsTable;
-      } else if (type === 'vehicle_refill') {
-        tableName = this.vehicleFuelRefillsTable;
-      } else if (type === 'withdrawal') {
-        tableName = this.fuelWithdrawalsTable;
-      } else {
-        throw new Error(`Invalid transaction type: ${type}`);
-      }
-
-      console.log(`💾 Deleting from ${tableName} table...`);
-      
-      // Delete from database
-      // Note: RLS policies should handle ownership verification at database level
-      const { error: deleteError } = await supabase
-        .from(tableName)
-        .delete()
-        .eq('id', dbId);
-
-      if (deleteError) {
-        console.error('❌ Database delete error:', deleteError);
-        throw new Error(`Failed to delete: ${deleteError.message}`);
-      }
-
-      console.log('✅ Transaction deleted successfully');
-      return { success: true };
-      
-    } catch (error) {
-      console.error('❌ Error deleting transaction:', error);
       return { success: false, error: error.message };
     }
   }

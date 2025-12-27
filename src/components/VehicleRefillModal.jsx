@@ -167,11 +167,11 @@ const VehicleRefillModal = ({ isOpen, onClose, onSuccess }) => {
       // Generate unique filename with proper extension
       const fileExt = file.name.split('.').pop().toLowerCase();
       const fileName = `invoice-refill-${crypto.randomUUID()}.${fileExt}`;
-      const filePath = fileName; // Don't add folder prefix since bucket is already 'fuel_invoices'
+      const filePath = fileName; // Don't add folder prefix since bucket is already 'fuel-invoices'
 
       // Upload to Supabase Storage
       const { data: uploadData, error: uploadError } = await supabase.storage
-        .from('fuel_invoices')
+        .from('fuel-invoices')
         .upload(filePath, file, {
           cacheControl: '3600',
           upsert: false
@@ -184,7 +184,7 @@ const VehicleRefillModal = ({ isOpen, onClose, onSuccess }) => {
 
       // Get public URL
       const { data: urlData } = supabase.storage
-        .from('fuel_invoices')
+        .from('fuel-invoices')
         .getPublicUrl(filePath);
 
       console.log('✅ Image uploaded successfully:', uploadData);
@@ -270,7 +270,7 @@ const VehicleRefillModal = ({ isOpen, onClose, onSuccess }) => {
       // Use the correct field names that match the database schema
       const refillData = {
         refill_date: formData.refill_date,
-        vehicle_id: formData.vehicle_id ? parseInt(formData.vehicle_id) : null, // FIXED Issue 3: Use null instead of empty string
+        vehicle_id: parseInt(formData.vehicle_id),
         liters: parseFloat(formData.liters),
         price_per_liter: parseFloat(formData.price_per_liter),
         odometer_km: formData.odometer_km ? parseFloat(formData.odometer_km) : null,

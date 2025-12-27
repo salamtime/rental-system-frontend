@@ -8,7 +8,7 @@ import {
   TruckIcon, DropletIcon, SettingsIcon, LogOutIcon,
   XIcon, CompassIcon, Loader2, DollarSignIcon
 } from 'lucide-react';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../hooks/useAuth';
 import { supabase } from '../../utils/supabaseClient';
 import AlertNotificationBadge from './AlertNotificationBadge';
 

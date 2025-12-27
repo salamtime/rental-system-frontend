@@ -15,8 +15,7 @@ import { Loader2, ShieldAlert, Pencil } from 'lucide-react';
 const modules = [
   'Dashboard', 'Calendar', 'Tours & Bookings', 'Rental Management', 'Customer Management', 
   'Fleet Management', 'Pricing Management', 'Quad Maintenance', 'Fuel Logs', 'Inventory', 
-  'Finance Management', 'Alerts', 'User & Role Management', 'System Settings', 'Project Export',
-  'WhatsApp Alerts'
+  'Finance Management', 'Alerts', 'User & Role Management', 'System Settings', 'Project Export'
 ];
 
 const UserManagement = () => {
@@ -27,23 +26,8 @@ const UserManagement = () => {
   const [isEditUserModalOpen, setEditUserModalOpen] = useState(false);
   const [isDeleteModalOpen, setDeleteModalOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState(null);
-  const [newUser, setNewUser] = useState({ 
-    email: '', 
-    password: '', 
-    name: '', 
-    role: 'employee',
-    phone_number: '',
-    whatsapp_notifications: false
-  });
-  const [editUser, setEditUser] = useState({ 
-    email: '', 
-    name: '', 
-    role: '', 
-    password: '', 
-    confirmPassword: '',
-    phone_number: '',
-    whatsapp_notifications: false
-  });
+  const [newUser, setNewUser] = useState({ email: '', password: '', name: '', role: 'employee' });
+  const [editUser, setEditUser] = useState({ email: '', name: '', role: '', password: '', confirmPassword: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [newUserPermissions, setNewUserPermissions] = useState(
     modules.reduce((acc, module) => ({ ...acc, [module]: true }), {})
@@ -200,44 +184,9 @@ const UserManagement = () => {
 
         console.log(`User ${data.user.id} created. Assigned modules:`, assignedModules);
 
-        // Insert user data into app_users table with phone and WhatsApp preferences
-        const completePermissions = {};
-        modules.forEach(module => {
-          completePermissions[module] = newUserPermissions[module] === true;
-        });
-
-        const upsertPayload = {
-          id: data.user.id,
-          email: newUser.email,
-          full_name: newUser.name,
-          role: newUser.role.toLowerCase(),
-          access_enabled: true,
-          permissions: completePermissions,
-          phone_number: newUser.phone_number || null,
-          whatsapp_notifications: newUser.whatsapp_notifications || false
-        };
-
-        console.log("Inserting user data into app_users table:", upsertPayload);
-
-        const { error: upsertError } = await supabase
-          .from('app_b30c02e74da644baad4668e3587d86b1_users')
-          .upsert(upsertPayload, { onConflict: 'id' });
-
-        if (upsertError) {
-          console.error("Error inserting user data:", upsertError);
-          toast.warning("User created but failed to save additional data.");
-        }
-
         // Close modal and reset form
         setAddUserModalOpen(false);
-        setNewUser({ 
-          email: '', 
-          password: '', 
-          name: '', 
-          role: 'employee',
-          phone_number: '',
-          whatsapp_notifications: false
-        });
+        setNewUser({ email: '', password: '', name: '', role: 'employee' });
         
         // Refresh user list
         console.log("Refreshing user list...");
@@ -259,46 +208,18 @@ const UserManagement = () => {
     }
   };
 
-  const openEditModal = async (user) => {
+  const openEditModal = (user) => {
     console.log("=== openEditModal ===");
     console.log("User to edit:", user);
     
     setSelectedUser(user);
-
-    // Fetch additional user data from app_users table
-    try {
-      const { data, error } = await supabase
-        .from('app_b30c02e74da644baad4668e3587d86b1_users')
-        .select('phone_number, whatsapp_notifications')
-        .eq('id', user.id)
-        .maybeSingle();
-
-      if (error && error.code !== 'PGRST116') {
-        console.error('Error fetching user data:', error);
-      }
-
-      setEditUser({
-        email: user.email || '',
-        name: user.name || '',
-        role: user.role || 'employee',
-        password: '',
-        confirmPassword: '',
-        phone_number: data?.phone_number || '',
-        whatsapp_notifications: data?.whatsapp_notifications || false
-      });
-    } catch (err) {
-      console.error('Error loading user data:', err);
-      setEditUser({
-        email: user.email || '',
-        name: user.name || '',
-        role: user.role || 'employee',
-        password: '',
-        confirmPassword: '',
-        phone_number: '',
-        whatsapp_notifications: false
-      });
-    }
-
+    setEditUser({
+      email: user.email || '',
+      name: user.name || '',
+      role: user.role || 'employee',
+      password: '',
+      confirmPassword: ''
+    });
     setEditUserModalOpen(true);
   };
 
@@ -350,9 +271,7 @@ const UserManagement = () => {
             email: editUser.email, 
             name: editUser.name, 
             role: editUser.role,
-            hasPassword: !!editUser.password,
-            phone_number: editUser.phone_number,
-            whatsapp_notifications: editUser.whatsapp_notifications
+            hasPassword: !!editUser.password 
         });
 
         const updates = {
@@ -367,32 +286,10 @@ const UserManagement = () => {
         }
 
         await updateUserProfile(selectedUser.id, updates);
-
-        // Update phone number and WhatsApp notifications in app_users table
-        const { error: updateError } = await supabase
-          .from('app_b30c02e74da644baad4668e3587d86b1_users')
-          .update({
-            phone_number: editUser.phone_number || null,
-            whatsapp_notifications: editUser.whatsapp_notifications || false
-          })
-          .eq('id', selectedUser.id);
-
-        if (updateError) {
-          console.error("Error updating user additional data:", updateError);
-          toast.warning("User updated but failed to save phone/WhatsApp preferences.");
-        }
         
         // Close modal and reset form
         setEditUserModalOpen(false);
-        setEditUser({ 
-          email: '', 
-          name: '', 
-          role: '', 
-          password: '', 
-          confirmPassword: '',
-          phone_number: '',
-          whatsapp_notifications: false
-        });
+        setEditUser({ email: '', name: '', role: '', password: '', confirmPassword: '' });
         setSelectedUser(null);
         
         // Refresh user list
@@ -523,13 +420,6 @@ const UserManagement = () => {
       console.log("✅ Is Array?", Array.isArray(completePermissions));
       console.log("✅ Is Object?", completePermissions !== null && typeof completePermissions === 'object' && !Array.isArray(completePermissions));
       
-      // Fetch current phone_number and whatsapp_notifications to preserve them
-      const { data: currentData } = await supabase
-        .from('app_b30c02e74da644baad4668e3587d86b1_users')
-        .select('phone_number, whatsapp_notifications')
-        .eq('id', selectedUserForPermissions.id)
-        .maybeSingle();
-
       // DEBUG: Log the exact payload before upsert
       const upsertPayload = {
         id: selectedUserForPermissions.id,
@@ -537,9 +427,7 @@ const UserManagement = () => {
         full_name: selectedUserForPermissions.name,
         role: selectedUserForPermissions.role,
         access_enabled: true,
-        permissions: completePermissions,
-        phone_number: currentData?.phone_number || null,
-        whatsapp_notifications: currentData?.whatsapp_notifications || false
+        permissions: completePermissions
       };
       
       console.log("🔍 UPSERT PAYLOAD (before database call):");
@@ -548,8 +436,6 @@ const UserManagement = () => {
       console.log("   - full_name:", upsertPayload.full_name);
       console.log("   - role:", upsertPayload.role);
       console.log("   - permissions:", JSON.stringify(upsertPayload.permissions, null, 2));
-      console.log("   - phone_number:", upsertPayload.phone_number);
-      console.log("   - whatsapp_notifications:", upsertPayload.whatsapp_notifications);
       
       // The Upsert Strategy: Use upsert instead of update
       const { error } = await supabase
@@ -638,7 +524,7 @@ const UserManagement = () => {
 
       {/* Add User Modal */}
       <Dialog open={isAddUserModalOpen} onOpenChange={setAddUserModalOpen}>
-        <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-[600px]">
           <DialogHeader>
             <DialogTitle>Add New User</DialogTitle>
             <DialogDescription className="sr-only">
@@ -659,10 +545,6 @@ const UserManagement = () => {
               <Input id="password" name="password" type="password" placeholder="Password" onChange={(e) => setNewUser(p => ({...p, password: e.target.value}))} value={newUser.password} className="col-span-3" />
             </div>
             <div className="grid grid-cols-4 items-center gap-4">
-              <Label htmlFor="phone_number" className="text-right">Phone Number</Label>
-              <Input id="phone_number" name="phone_number" type="tel" placeholder="+212 6XX XXX XXX" onChange={(e) => setNewUser(p => ({...p, phone_number: e.target.value}))} value={newUser.phone_number} className="col-span-3" />
-            </div>
-            <div className="grid grid-cols-4 items-center gap-4">
               <Label htmlFor="role" className="text-right">Role</Label>
               <Select onValueChange={handleRoleChange} value={newUser.role}>
                 <SelectTrigger className="col-span-3"><SelectValue placeholder="Select a role" /></SelectTrigger>
@@ -672,17 +554,6 @@ const UserManagement = () => {
                   <SelectItem value="guide">Guide</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
-            <div className="grid grid-cols-4 items-center gap-4">
-              <Label className="text-right">WhatsApp Alerts</Label>
-              <div className="col-span-3 flex items-center space-x-2">
-                <Checkbox
-                  id="whatsapp_notifications"
-                  checked={newUser.whatsapp_notifications}
-                  onCheckedChange={(checked) => setNewUser(p => ({...p, whatsapp_notifications: checked}))}
-                />
-                <Label htmlFor="whatsapp_notifications" className="text-sm font-normal">Enable WhatsApp notifications</Label>
-              </div>
             </div>
              <div>
                 <Label className="text-sm font-medium">Module Permissions</Label>
@@ -745,18 +616,6 @@ const UserManagement = () => {
               />
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-4 items-center gap-4">
-              <Label htmlFor="edit-phone" className="text-left sm:text-right">Phone Number</Label>
-              <Input 
-                id="edit-phone" 
-                name="phone_number" 
-                type="tel" 
-                placeholder="+212 6XX XXX XXX" 
-                onChange={(e) => setEditUser(p => ({...p, phone_number: e.target.value}))} 
-                value={editUser.phone_number} 
-                className="col-span-1 sm:col-span-3" 
-              />
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-4 items-center gap-4">
               <Label htmlFor="edit-role" className="text-left sm:text-right">Role</Label>
               <Select 
                 onValueChange={(role) => setEditUser(p => ({...p, role}))} 
@@ -772,17 +631,6 @@ const UserManagement = () => {
                   <SelectItem value="guide">Guide</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-4 items-center gap-4">
-              <Label className="text-left sm:text-right">WhatsApp Alerts</Label>
-              <div className="col-span-1 sm:col-span-3 flex items-center space-x-2">
-                <Checkbox
-                  id="edit-whatsapp"
-                  checked={editUser.whatsapp_notifications}
-                  onCheckedChange={(checked) => setEditUser(p => ({...p, whatsapp_notifications: checked}))}
-                />
-                <Label htmlFor="edit-whatsapp" className="text-sm font-normal">Enable WhatsApp notifications</Label>
-              </div>
             </div>
             {selectedUser?.id === currentUser?.id && (
               <div className="text-sm text-muted-foreground italic">

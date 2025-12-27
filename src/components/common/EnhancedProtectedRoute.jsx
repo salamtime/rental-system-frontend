@@ -1,7 +1,7 @@
 import React from 'react';
 import { useSelector } from 'react-redux';
 import { usePermissions } from '../../hooks/usePermissions';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../hooks/useAuth';
 
 /**
  * Enhanced Protected Route Component with secure role handling
@@ -25,7 +25,7 @@ const EnhancedProtectedRoute = ({
   const { hasModuleAccess, hasRoleAccess } = usePermissions();
   
   // Extract role from authenticated user (from Supabase metadata only)
-  const userRole = auth.user?.role || null;
+  const userRole = auth.userRole || null;
   const email = auth.user?.email || user?.email;
   
   console.log('🔍 EnhancedProtectedRoute - Authentication State:', {

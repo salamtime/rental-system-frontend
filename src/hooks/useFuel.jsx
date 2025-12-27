@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useAuth } from '../contexts/AuthContext';
+import { useAuth } from './useAuth';
 import FuelService from '../services/FuelService';
 import VehicleService from '../services/VehicleService';
 import { format } from 'date-fns';
@@ -21,8 +21,7 @@ const useFuel = () => {
   const [success, setSuccess] = useState(null);
   
   // Auth state for permissions
-  const { user } = useAuth();
-  const userRole = user?.role;
+  const { user, userRole } = useAuth();
   
   // Permission checks
   const canEditDelete = ['admin', 'manager', 'owner'].includes(userRole);

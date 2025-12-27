@@ -1,13 +1,13 @@
 import React from 'react';
 import { useSelector } from 'react-redux';
-import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../hooks/useAuth';
 
 const ProtectedRoute = ({ children, requiredRole, fallback = null }) => {
   const { user, isAuthenticated } = useSelector(state => state.auth);
   const auth = useAuth();
 
   // Clean role extraction from metadata only
-  const userRole = auth.user?.role;
+  const userRole = auth.userRole;
 
   console.log('🔒 ProtectedRoute - Clean auth check:', {
     isAuthenticated,

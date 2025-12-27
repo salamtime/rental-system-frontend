@@ -1862,7 +1862,6 @@ const VehicleManagement: React.FC = () => {
                       disabled={!!viewingVehicle}
                     >
                       <option value="available">Available</option>
-                      <option value="scheduled">Scheduled</option>
                       <option value="rented">Rented</option>
                       <option value="maintenance">Maintenance</option>
                       <option value="out_of_service">Out of Service</option>

@@ -53,7 +53,7 @@ const CustomerManagementDashboard = () => {
 
       const [customersResponse, rentalsResponse] = await Promise.all([
         supabase.from(`app_${APP_ID}_customers`).select('*'),
-        supabase.from(`app_${APP_ID}_rentals`).select(`*, vehicle:saharax_0u4w4d_vehicles(*)`),
+        supabase.from(`app_${APP_ID}_rentals`).select(`*, vehicle:app_${APP_ID}_vehicles(*)`),
       ]);
 
       if (customersResponse.error) {

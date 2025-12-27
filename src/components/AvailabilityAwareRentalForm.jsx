@@ -7,11 +7,9 @@ import AppSettingsService from '../services/AppSettingsService';
 import EnhancedUnifiedIDScanModal from './customers/EnhancedUnifiedIDScanModal';
 import enhancedUnifiedCustomerService from '../services/EnhancedUnifiedCustomerService';
 import { supabase } from '../lib/supabase';
-import { useAuth } from '../contexts/AuthContext';
 import { DollarSign, Calculator, Info, AlertCircle, CheckCircle, Loader, Clock, Scan, RefreshCw, Shield, CalendarX, UserPlus, UserSearch } from 'lucide-react';
 import { getMoroccoTodayString, getMoroccoDateOffset, getMoroccoHourlyTimes, isAfter, parseDateAsLocal, formatDateToYYYYMMDD } from '../utils/moroccoTime';
 import { debounce } from 'lodash';
-import { toast } from 'sonner';
 
 const AvailabilityAwareRentalForm = ({ 
   onSuccess, 
@@ -19,9 +17,6 @@ const AvailabilityAwareRentalForm = ({
   initialData = null,
   mode = 'create'
 }) => {
-  // Get user role from AuthContext
-  const { userProfile } = useAuth();
-
   const [formData, setFormData] = useState({
     customer_name: '',
     customer_email: '',
@@ -91,9 +86,6 @@ const AvailabilityAwareRentalForm = ({
   const [showSuggestions, setShowSuggestions] = useState(false);
   const customerSearchRef = useRef(null);
   const isProgrammaticChange = useRef(false);
-
-  // Store the auto-calculated price for comparison
-  const [autoCalculatedPrice, setAutoCalculatedPrice] = useState(0);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -297,7 +289,6 @@ const AvailabilityAwareRentalForm = ({
         ...prev,
         unit_price: 0
       }));
-      setAutoCalculatedPrice(0);
     }
   }, [formData.vehicle_id, formData.rental_type]);
 
@@ -541,9 +532,6 @@ const AvailabilityAwareRentalForm = ({
       const unitPrice = getDirectPricing(formData.vehicle_id, formData.rental_type);
 
       console.log('💰 Retrieved unit price:', unitPrice);
-
-      // Store the auto-calculated price for later comparison
-      setAutoCalculatedPrice(unitPrice);
 
       setFormData(prev => ({
         ...prev,
@@ -947,96 +935,8 @@ const AvailabilityAwareRentalForm = ({
     return `cust_${timestamp}_${randomString}`;
   };
 
-  // 📱 WhatsApp Notification Helper Function
-  const sendWhatsAppNotifications = async (pendingTotalRequest, rentalId) => {
-    try {
-      console.log('📱 WHATSAPP: Fetching admins with WhatsApp enabled...');
-      
-      // Fetch admins/owners with WhatsApp notifications enabled
-      const { data: admins, error } = await supabase
-        .from('app_b30c02e74da644baad4668e3587d86b1_users')
-        .select('id, full_name, phone_number, whatsapp_notifications, role')
-        .in('role', ['owner', 'admin'])
-        .eq('whatsapp_notifications', true)
-        .not('phone_number', 'is', null);
-
-      if (error) {
-        console.error('📱 WHATSAPP: Error fetching admins:', error);
-        return 0;
-      }
-
-      if (!admins || admins.length === 0) {
-        console.log('📱 WHATSAPP: No admins with WhatsApp enabled found');
-        return 0;
-      }
-
-      console.log(`📱 WHATSAPP: Found ${admins.length} admin(s) with WhatsApp enabled:`, admins);
-
-      // Generate WhatsApp URLs and trigger notifications
-      let notificationCount = 0;
-      
-      for (const admin of admins) {
-        try {
-          // Clean phone number (remove non-numeric characters except +)
-          let cleanPhone = admin.phone_number.replace(/[^\d+]/g, '');
-          
-          // Ensure phone starts with country code
-          if (!cleanPhone.startsWith('+')) {
-            // Assume Morocco country code if not provided
-            cleanPhone = '+212' + cleanPhone.replace(/^0+/, '');
-          }
-
-          // Enhanced WhatsApp message with proper encoding
-          const messageText = 
-            `🚨 *SAHARAX - Rental Approval Required*\n\n` +
-            `💰 *Price Override Request:* ${pendingTotalRequest} MAD\n` +
-            `📋 *Rental ID:* ${rentalId.substring(0, 8)}...\n` +
-            `👤 *Requested by:* Employee\n` +
-            `⏰ *Time:* ${new Date().toLocaleTimeString('en-MA', { hour: '2-digit', minute: '2-digit' })}\n\n` +
-            `🔗 *Direct Approval Link:*\n` +
-            `${window.location.origin}/admin/rentals/${rentalId}\n\n` +
-            `_Click the link above to review and take action._\n` +
-            `⚠️ *Action Required Within 24 Hours*`;
-          
-          const message = encodeURIComponent(messageText);
-
-          const whatsappUrl = `https://wa.me/${cleanPhone}?text=${message}`;
-
-          console.log(`📱 WHATSAPP: Opening WhatsApp for ${admin.full_name} (${admin.phone_number})`);
-          console.log(`📱 WHATSAPP: URL: ${whatsappUrl}`);
-
-          // Open WhatsApp in new tab
-          window.open(whatsappUrl, '_blank');
-          
-          notificationCount++;
-
-          // Add small delay between notifications to prevent browser blocking
-          if (notificationCount < admins.length) {
-            await new Promise(resolve => setTimeout(resolve, 500));
-          }
-        } catch (err) {
-          console.error(`📱 WHATSAPP: Error sending notification to ${admin.full_name}:`, err);
-        }
-      }
-
-      console.log(`📱 WHATSAPP: Successfully triggered ${notificationCount} notification(s)`);
-      return notificationCount;
-
-    } catch (err) {
-      console.error('📱 WHATSAPP: Error in sendWhatsAppNotifications:', err);
-      return 0;
-    }
-  };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
-
-    // 🔍 DEBUG: Log user profile and role at the start
-    console.log('🔍 DEBUG: Checking user profile and role for approval logic:');
-    console.log('- userProfile:', userProfile);
-    console.log('- userProfile?.role:', userProfile?.role);
-    console.log('- Manual price:', parseFloat(formData.unit_price) || 0);
-    console.log('- Auto price:', autoCalculatedPrice);
 
     const submissionReadyFormData = { ...formData };
 
@@ -1050,7 +950,7 @@ const AvailabilityAwareRentalForm = ({
       submissionReadyFormData.rental_end_time = currentTime;
     }
     
-    console.log('📝 FRONTEND FIX: Form submission started...');
+    console.log('📝 FIXED SUBMISSION: Form submission started...');
     console.log('📊 Current form data (with auto-filled time):', submissionReadyFormData);
     console.log('🔍 Submission state:', { canSubmit, loading, availabilityStatus });
     
@@ -1072,9 +972,7 @@ const AvailabilityAwareRentalForm = ({
       return;
     }
     
-    // FRONTEND FIX: Properly handle email trimming without converting to null
     const trimmedEmail = (submissionReadyFormData.customer_email || '').trim();
-    const emailToSubmit = trimmedEmail.length > 0 ? trimmedEmail : null;
 
     if (trimmedEmail.length > 0) {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -1085,9 +983,7 @@ const AvailabilityAwareRentalForm = ({
       }
     }
     
-    console.log('✅ FRONTEND FIX: Validation passed, proceeding with submission');
-    console.log('📧 FRONTEND FIX: Email value to submit:', emailToSubmit);
-    console.log('📞 FRONTEND FIX: Phone value to submit:', submissionReadyFormData.customer_phone);
+    console.log('✅ FIXED SUBMISSION: Validation passed, proceeding with submission');
     
     setLoading(true);
     setError(null);
@@ -1105,7 +1001,7 @@ const AvailabilityAwareRentalForm = ({
           id: newCustomerId,
           full_name: submissionReadyFormData.customer_name,
           phone: submissionReadyFormData.customer_phone,
-          email: emailToSubmit,
+          email: trimmedEmail || null,
           licence_number: submissionReadyFormData.customer_licence_number || null,
           id_number: submissionReadyFormData.customer_id_number || null,
           date_of_birth: submissionReadyFormData.customer_dob || null,
@@ -1131,37 +1027,9 @@ const AvailabilityAwareRentalForm = ({
         }));
       }
 
-      // 🚨 FIXED GATEKEEPER LOGIC: Enhanced role handling and approval logic
-      console.log('🛡️ GATEKEEPER: Checking for price override...');
-      
-      // FIXED: Better role handling with fallback
-      const userRole = userProfile?.role || 'unknown';
-      console.log('🛡️ GATEKEEPER: Current user role from AuthContext:', userRole, 'Full profile:', userProfile);
-
-      // Compare manual price with auto-calculated price
-      const manualPrice = parseFloat(submissionReadyFormData.unit_price) || 0;
-      const autoPrice = parseFloat(autoCalculatedPrice) || 0;
-      const isPriceOverride = manualPrice !== autoPrice;
-      const isStaff = userRole === 'employee' || userRole === 'guide';
-      const isAdminOrOwner = userRole === 'admin' || userRole === 'owner';
-
-      console.log('🛡️ GATEKEEPER: Price comparison:', {
-        manualPrice,
-        autoPrice,
-        isPriceOverride,
-        userRole,
-        isStaff,
-        isAdminOrOwner
-      });
-
-      // FRONTEND FIX: Explicitly preserve customer_phone and customer_email in submission data
       const submissionData = {
         ...submissionReadyFormData,
         customer_id: finalCustomerId,
-        
-        // FRONTEND FIX: Explicitly set customer contact info (CRITICAL FIX)
-        customer_phone: submissionReadyFormData.customer_phone,
-        customer_email: emailToSubmit,
         
         vehicle_id: submissionReadyFormData.vehicle_id ? Number(submissionReadyFormData.vehicle_id) : null,
         quantity_days: Number(submissionReadyFormData.quantity_days) || 0,
@@ -1178,6 +1046,7 @@ const AvailabilityAwareRentalForm = ({
         rental_start_at: composeDateTime(submissionReadyFormData.rental_start_date, submissionReadyFormData.rental_start_time)?.toISOString(),
         rental_end_at: composeDateTime(submissionReadyFormData.rental_end_date, submissionReadyFormData.rental_end_time)?.toISOString(),
 
+        customer_email: trimmedEmail || null,
         accessories: submissionReadyFormData.accessories || null,
         customer_licence_number: submissionReadyFormData.customer_licence_number || null,
         customer_id_number: submissionReadyFormData.customer_id_number || null,
@@ -1189,55 +1058,10 @@ const AvailabilityAwareRentalForm = ({
         signature_url: submissionReadyFormData.signature_url || null,
       };
 
-      // 🚨 FIXED GATEKEEPER: Apply approval logic with proper handling
-      if (isPriceOverride) {
-        if (isStaff) {
-          console.log('🛡️ GATEKEEPER: Staff price override detected! Setting pending approval status...');
-          
-          // Calculate the original total with auto price
-          const originalSubtotal = (submissionData.quantity_days || 0) * autoPrice;
-          const originalTotal = originalSubtotal + (submissionData.transport_fee || 0);
-          
-          // Set approval fields
-          submissionData.approval_status = 'pending';
-          submissionData.pending_total_request = submissionData.total_amount; // Store the requested total
-          submissionData.total_amount = originalTotal; // Reset to original auto-calculated price
-          submissionData.remaining_amount = originalTotal - (submissionData.deposit_amount || 0);
-          
-          console.log('🛡️ GATEKEEPER: Approval data set for staff:', {
-            approval_status: 'pending',
-            pending_total_request: submissionData.pending_total_request,
-            original_total_amount: originalTotal,
-            manual_unit_price: manualPrice,
-            auto_unit_price: autoPrice
-          });
-
-        } else if (isAdminOrOwner) {
-          console.log('🛡️ GATEKEEPER: Admin/Owner price override - auto-approved');
-          submissionData.approval_status = 'approved';
-          submissionData.pending_total_request = null;
-        } else {
-          // FIXED: Unknown role or other users - require approval
-          console.log('🛡️ GATEKEEPER: Unknown user role with price override - requiring approval');
-          submissionData.approval_status = 'pending';
-          submissionData.pending_total_request = submissionData.total_amount;
-
-        }
-      } else {
-        // FIXED: No price override - auto approve
-        console.log('🛡️ GATEKEEPER: No price override detected - auto approving');
-        submissionData.approval_status = 'auto';
-        submissionData.pending_total_request = null;
-      }
-
       delete submissionData.vehicle;
       delete submissionData.booking_range;
 
-      console.log('📦 FRONTEND FIX: Final Submission Payload:', submissionData);
-      console.log('📧 FRONTEND FIX: Confirmed customer_email in payload:', submissionData.customer_email);
-      console.log('📞 FRONTEND FIX: Confirmed customer_phone in payload:', submissionData.customer_phone);
-      console.log('🛡️ GATEKEEPER: Confirmed approval_status in payload:', submissionData.approval_status);
-      console.log('🛡️ GATEKEEPER: Confirmed pending_total_request in payload:', submissionData.pending_total_request);
+      console.log('Final Submission Payload:', submissionData);
       
       let result;
       
@@ -1253,32 +1077,6 @@ const AvailabilityAwareRentalForm = ({
       
       if (result && result.success) {
         let successMessage = `✅ Rental successfully ${mode === 'create' ? 'created' : 'updated'}!`;
-        
-        // Add approval status message
-        if (submissionData.approval_status === 'pending') {
-          successMessage += ' ⏳ Price override submitted for admin approval.';
-          
-          // 📱 WHATSAPP NOTIFICATION: Send notifications to admins AFTER rental is created
-          console.log('📱 WHATSAPP: Triggering WhatsApp notifications with rental ID:', result.data.id);
-          try {
-            const notificationCount = await sendWhatsAppNotifications(
-              submissionData.pending_total_request, 
-              result.data.id
-            );
-            
-            if (notificationCount > 0) {
-              console.log(`📱 WHATSAPP: Successfully notified ${notificationCount} admin(s)`);
-              toast.success(`📱 WhatsApp notifications sent to ${notificationCount} admin(s)`);
-            } else {
-              console.log('📱 WHATSAPP: No admins were notified (none have WhatsApp enabled)');
-              toast.info('⚠️ No admins with WhatsApp enabled found. Approval request saved.');
-            }
-          } catch (whatsappError) {
-            console.error('📱 WHATSAPP: Error sending notifications:', whatsappError);
-            toast.warning('⚠️ Approval request saved, but WhatsApp notifications failed');
-          }
-        }
-        
         setSuccess(successMessage);
         console.log(`✅ Rental operation successful:`, result.data);
 
@@ -1298,14 +1096,14 @@ const AvailabilityAwareRentalForm = ({
       let isConflict = false;
 
       if (err.message && err.message.includes('Database insertion failed:')) {
-        const dbErrorMatch = err.message.match(/Database insertion failed: (\{.*?\})/s); 
+        const dbErrorMatch = err.message.match(/Database insertion failed: (\\{.*?\\})/s); 
         if (dbErrorMatch && dbErrorMatch[1]) {
           try {
             const jsonString = dbErrorMatch[1].trim().replace(/^[\\']|[\\']$/g, '');
             const dbErrorObj = JSON.parse(jsonString);
             
             if (dbErrorObj.code === '23514' && dbErrorObj.message.includes('Vehicle availability check failed')) {
-                const match = dbErrorObj.message.match(/Next available:\s*(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})/);
+                const match = dbErrorObj.message.match(/Next available:\\s*(\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2})/);
                 if (match) nextAvailableTime = match[1];
                 errorMessage = `🚫 Vehicle Conflict: ${dbErrorObj.message}`;
                 isConflict = true;
@@ -1324,7 +1122,7 @@ const AvailabilityAwareRentalForm = ({
              err.message.includes('Vehicle is already booked')) {
            
            isConflict = true;
-           const match = err.message.match(/Next available:\s*(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2})/);
+           const match = err.message.match(/Next available:\\s*(\\d{4}-\\d{2}-\\d{2}\\s\\d{2}:\\d{2}:\\d{2})/);
            if (match) {
              nextAvailableTime = match[1];
            }
@@ -1444,7 +1242,6 @@ const AvailabilityAwareRentalForm = ({
     setAvailabilityStatus('unknown');
     setAvailabilityDetails(null);
     setCanSubmit(false);
-    setAutoCalculatedPrice(0);
   };
 
   const getComposedStartDateTime = () => {

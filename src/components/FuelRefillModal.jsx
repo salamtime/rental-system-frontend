@@ -20,7 +20,6 @@ const FuelRefillModal = ({ isOpen, onClose, onSave }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [imagePreview, setImagePreview] = useState(null);
   const [dragActive, setDragActive] = useState(false);
-  const [isManualOverride, setIsManualOverride] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -39,22 +38,8 @@ const FuelRefillModal = ({ isOpen, onClose, onSave }) => {
       });
       setErrors({});
       setImagePreview(null);
-      setIsManualOverride(false);
     }
   }, [isOpen]);
-
-  const resetToAutoCalculated = () => {
-    const liters = parseFloat(formData.liters_added) || 0;
-    const unitPrice = parseFloat(formData.unit_price) || 0;
-    
-    if (liters > 0 && unitPrice > 0) {
-      setFormData(prev => ({
-        ...prev,
-        total_cost: (liters * unitPrice).toFixed(2)
-      }));
-      setIsManualOverride(false);
-    }
-  };
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -63,21 +48,8 @@ const FuelRefillModal = ({ isOpen, onClose, onSave }) => {
       [name]: value
     }));
 
-    // Handle manual override of total cost
-    if (name === 'total_cost') {
-      setIsManualOverride(true);
-      // Clear error when user starts typing
-      if (errors[name]) {
-        setErrors(prev => ({
-          ...prev,
-          [name]: ''
-        }));
-      }
-      return;
-    }
-
-    // Auto-calculate total cost when liters or unit price changes (only if not manually overridden)
-    if ((name === 'liters_added' || name === 'unit_price') && !isManualOverride) {
+    // Calculate total cost when liters or unit price changes
+    if (name === 'liters_added' || name === 'unit_price') {
       const liters = name === 'liters_added' ? parseFloat(value) || 0 : parseFloat(formData.liters_added) || 0;
       const unitPrice = name === 'unit_price' ? parseFloat(value) || 0 : parseFloat(formData.unit_price) || 0;
       
@@ -182,49 +154,36 @@ const FuelRefillModal = ({ isOpen, onClose, onSave }) => {
     setImagePreview(null);
   };
 
-  const uploadImageToStorage = async (file) => {
-    console.log('📤 Uploading image to Supabase Storage (fuel_invoices bucket)...');
-    
-    // Generate unique filename matching the standard pattern
-    const fileExt = file.name.split('.').pop().toLowerCase();
-    const timestamp = Date.now();
-    const randomStr = Math.random().toString(36).substring(2, 15);
-    const fileName = `invoice-${timestamp}-${randomStr}.${fileExt}`;
-    const filePath = `invoices/${fileName}`;
+  const uploadImageToSupabase = async (file) => {
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `invoice-${Date.now()}-${Math.random().toString(36).substring(2)}.${fileExt}`;
+      const filePath = `invoices/${fileName}`;
 
-    console.log('📤 Upload path:', filePath);
+      console.log('📤 Uploading image to Supabase storage bucket "invoices":', filePath);
 
-    // Upload to Supabase Storage - NO FALLBACK, must succeed
-    const { data: uploadData, error: uploadError } = await supabase.storage
-      .from('fuel_invoices')
-      .upload(filePath, file, {
-        cacheControl: '3600',
-        upsert: false
-      });
+      const { data, error } = await supabase.storage
+        .from('invoices') // CORRECTED: Use 'invoices' bucket
+        .upload(filePath, file);
 
-    if (uploadError) {
-      console.error('❌ Storage upload failed:', uploadError);
-      throw new Error(`Failed to upload invoice image: ${uploadError.message}`);
+      if (error) {
+        console.error('❌ Error uploading to Supabase storage:', error);
+        throw error;
+      }
+
+      console.log('✅ Image uploaded to Supabase storage:', data);
+
+      // Get public URL
+      const { data: urlData } = supabase.storage
+        .from('invoices') // CORRECTED: Use 'invoices' bucket
+        .getPublicUrl(filePath);
+
+      return urlData.publicUrl; // CORRECTED: Return only the URL string
+    } catch (error) {
+      console.error('❌ Unexpected error uploading image:', error);
+      setErrors(prev => ({ ...prev, submit: `Image upload failed: ${error.message}` }));
+      return null;
     }
-
-    // Get public URL
-    const { data: urlData } = supabase.storage
-      .from('fuel_invoices')
-      .getPublicUrl(filePath);
-
-    console.log('✅ Image uploaded successfully');
-    console.log('🔗 Public URL:', urlData.publicUrl);
-
-    // Return standardized JSONB format (storage type only)
-    return {
-      type: 'storage',
-      path: filePath,
-      url: urlData.publicUrl,
-      name: file.name,
-      size: file.size,
-      contentType: file.type,
-      uploadedAt: new Date().toISOString()
-    };
   };
 
   const validateForm = () => {
@@ -257,33 +216,31 @@ const FuelRefillModal = ({ isOpen, onClose, onSave }) => {
     setErrors({}); // Clear previous submission errors
 
     try {
-      // Upload image if present and get the JSONB data
-      let imageData = null;
+      // Upload image if present and get the URL
+      let imageUrl = null;
       if (formData.invoice_image) {
         console.log('📤 Processing invoice image upload...');
-        imageData = await uploadImageToStorage(formData.invoice_image);
-        console.log('✅ Image data prepared:', imageData);
+        imageUrl = await uploadImageToSupabase(formData.invoice_image);
+        if (!imageUrl) {
+            setIsLoading(false);
+            return; // Stop if upload failed, error is already set
+        }
       }
 
-      // Calculate unit_price from cost/liters to ensure it's never null
-      const litersAdded = parseFloat(formData.liters_added);
-      const totalCost = parseFloat(formData.total_cost);
-      const calculatedUnitPrice = litersAdded > 0 ? totalCost / litersAdded : 0;
-
       const refillData = {
-        liters_added: litersAdded,
-        unit_price: calculatedUnitPrice,
-        total_cost: totalCost,
+        liters_added: parseFloat(formData.liters_added),
+        unit_price: parseFloat(formData.unit_price),
+        total_cost: parseFloat(formData.total_cost),
         fuel_type: formData.fuel_type,
         refill_date: formData.refill_date,
         fuel_station: formData.fuel_station,
         location: formData.location,
         refilled_by: formData.refilled_by,
         notes: formData.notes,
-        invoice_image: imageData // STANDARDIZED: Only use invoice_image (JSONB format)
+        invoice_url: imageUrl // CORRECTED: Use 'invoice_url' and the URL string
       };
 
-      console.log('💾 Creating tank refill with JSONB invoice_image:', refillData);
+      console.log('💾 Creating tank refill:', refillData);
 
       const { data, error } = await supabase
         .from('fuel_refills')
@@ -298,16 +255,11 @@ const FuelRefillModal = ({ isOpen, onClose, onSave }) => {
       }
 
       console.log('✅ Tank refill created successfully:', data);
-      
-      // FIXED: Call onSave without parameters (parent expects no params)
-      if (typeof onSave === 'function') {
-        onSave();
-      }
-      
+      onSave(data);
       onClose();
     } catch (error) {
       console.error('❌ Unexpected error creating tank refill:', error);
-      setErrors({ submit: error.message || 'An unexpected error occurred. Please try again.' });
+      setErrors({ submit: 'An unexpected error occurred. Please try again.' });
     } finally {
       setIsLoading(false);
     }
@@ -402,24 +354,8 @@ const FuelRefillModal = ({ isOpen, onClose, onSave }) => {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center justify-between">
-                <span>Total Cost (MAD)</span>
-                {isManualOverride ? (
-                  <span className="text-xs text-orange-600 flex items-center gap-1">
-                    ✏️ Manual Override
-                    <button
-                      type="button"
-                      onClick={resetToAutoCalculated}
-                      className="text-blue-600 hover:text-blue-800 underline ml-2"
-                    >
-                      Reset
-                    </button>
-                  </span>
-                ) : (
-                  <span className="text-xs text-green-600 flex items-center gap-1">
-                    🧮 Auto-calculated
-                  </span>
-                )}
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Total Cost (MAD)
               </label>
               <input
                 type="number"
@@ -428,18 +364,10 @@ const FuelRefillModal = ({ isOpen, onClose, onSave }) => {
                 onChange={handleInputChange}
                 step="0.01"
                 min="0"
-                className={`w-full px-3 py-2 border rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                  isManualOverride 
-                    ? 'border-orange-300 bg-orange-50' 
-                    : 'border-gray-300 bg-green-50'
-                }`}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md bg-gray-50 focus:outline-none"
                 placeholder="0.00 MAD"
+                readOnly
               />
-              <p className="text-xs text-gray-500 mt-1">
-                {isManualOverride 
-                  ? '💡 Manually edited. Click Reset to return to auto-calculated value.' 
-                  : '💡 Editable field. Enter custom amount if needed (e.g., for discounts).'}
-              </p>
             </div>
           </div>
 

@@ -30,10 +30,6 @@ const EnhancedStepperRentalForm = ({ onSubmit, initialData = null, isLoading = f
   const [scannedCustomerData, setScannedCustomerData] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const { userProfile } = useAuth();
-  
-  // NEW: Step transition cooldown to prevent auto-submission
-  const [stepTransitionCooldown, setStepTransitionCooldown] = useState(false);
-  const stepTransitionTimerRef = useRef(null);
 
   // Form state - COMPLETE from AvailabilityAwareRentalForm
   const [formData, setFormData] = useState({
@@ -684,15 +680,6 @@ const EnhancedStepperRentalForm = ({ onSubmit, initialData = null, isLoading = f
     };
   }, []);
 
-  // NEW: Cleanup step transition timer on unmount
-  useEffect(() => {
-    return () => {
-      if (stepTransitionTimerRef.current) {
-        clearTimeout(stepTransitionTimerRef.current);
-      }
-    };
-  }, []);
-
   // === EVENT HANDLERS ===
   
   const handleInputChange = (field, value) => {
@@ -963,27 +950,8 @@ const EnhancedStepperRentalForm = ({ onSubmit, initialData = null, isLoading = f
     return Object.keys(newErrors).length === 0;
   };
 
-  // NEW: Enhanced handleNext with cooldown activation
   const handleNext = () => {
     if (validateStep(currentStep)) {
-      console.log('🔄 Step transition initiated from Step', currentStep);
-      
-      // Clear any existing timer
-      if (stepTransitionTimerRef.current) {
-        clearTimeout(stepTransitionTimerRef.current);
-      }
-      
-      // Activate cooldown to prevent immediate submission
-      setStepTransitionCooldown(true);
-      console.log('🛡️ COOLDOWN: Activated 300ms cooldown to prevent auto-submission');
-      
-      // Set timer to deactivate cooldown after 300ms
-      stepTransitionTimerRef.current = setTimeout(() => {
-        setStepTransitionCooldown(false);
-        console.log('✅ COOLDOWN: Deactivated - form submission now allowed');
-      }, 300);
-      
-      // Move to next step
       setCurrentStep(prev => Math.min(prev + 1, 3));
     }
   };
@@ -992,31 +960,10 @@ const EnhancedStepperRentalForm = ({ onSubmit, initialData = null, isLoading = f
     setCurrentStep(prev => Math.max(prev - 1, 1));
   };
 
-  // Prevent form submission on Enter key when not on Step 3
-  const handleFormKeyDown = (e) => {
-    if (e.key === 'Enter' && currentStep !== 3) {
-      e.preventDefault();
-      console.log('🛡️ GATEKEEPER: Prevented Enter key submission on Step', currentStep);
-      return false;
-    }
-  };
-
-  // === FORM SUBMISSION with ENHANCED GATEKEEPER LOGIC ===
+  // === FORM SUBMISSION with GATEKEEPER LOGIC ===
+  
   const handleSubmit = async (e) => {
     e.preventDefault();
-    
-    // CRITICAL: Prevent submission if not on final step
-    if (currentStep !== 3) {
-      console.warn('⚠️ GATEKEEPER: Blocked submission attempt on Step', currentStep);
-      return;
-    }
-    
-    // NEW: Check cooldown status
-    if (stepTransitionCooldown) {
-      console.warn('🛡️ COOLDOWN GATEKEEPER: Blocked submission during step transition cooldown');
-      return;
-    }
-    
     setSubmitting(true);
     setErrors({});
     setSuccess(null);
@@ -1340,7 +1287,7 @@ const EnhancedStepperRentalForm = ({ onSubmit, initialData = null, isLoading = f
       )}
 
       {/* Form Content */}
-      <form onSubmit={handleSubmit} onKeyDown={handleFormKeyDown} className="bg-white rounded-lg shadow-lg p-4 sm:p-6">
+      <form onSubmit={handleSubmit} className="bg-white rounded-lg shadow-lg p-4 sm:p-6">
         {/* Step 1: Customer & ID Scan */}
         {currentStep === 1 && (
           <div className="space-y-6">
@@ -1690,7 +1637,7 @@ const EnhancedStepperRentalForm = ({ onSubmit, initialData = null, isLoading = f
           </div>
         )}
 
-        {/* Step 3: Review & Payment - KEEPING ORIGINAL CONTENT */}
+        {/* Step 3: Review & Payment */}
         {currentStep === 3 && (
           <div className="space-y-6">
             <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-4">Review & Payment</h2>

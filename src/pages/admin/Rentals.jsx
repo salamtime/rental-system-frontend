@@ -7,11 +7,13 @@ import VideoContractModal from '../../components/VideoContractModal';
 import VehicleAvailabilityService from '../../services/VehicleAvailabilityService';
 import ViewCustomerDetailsDrawer from '../../components/admin/ViewCustomerDetailsDrawer';
 import { getPaymentStatusStyle } from '../../config/statusColors';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, Clock } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
 
 const Rentals = () => {
   const navigate = useNavigate();
   const location = useLocation();
+  const { user } = useAuth();
   const [rentals, setRentals] = useState([]);
   const [vehicles, setVehicles] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -45,6 +47,8 @@ const Rentals = () => {
         .select(`
           *,
           payment_status,
+          approval_status,
+          pending_total_request,
           vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(
             id,
             name,
@@ -168,6 +172,19 @@ const Rentals = () => {
     return rental.payment_status === 'paid';
   };
 
+  // Check if current user can delete rentals
+  const canDelete = () => {
+    if (!user?.id) return false;
+    
+    console.log('🔐 Delete permission check:', {
+      userId: user.id,
+      userRole: user.role,
+      canDelete: user.role === 'owner'
+    });
+    
+    return user.role === 'owner';
+  };
+
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const statusFromUrl = params.get('status') || 'all';
@@ -240,6 +257,16 @@ const Rentals = () => {
   };
 
   const handleDeleteRental = async (rentalId) => {
+    // Check owner permission first
+    if (user?.role !== 'owner') {
+      console.log('🚫 Delete blocked: User is not an owner', {
+        userId: user?.id,
+        userRole: user?.role
+      });
+      alert('⚠️ Only owners can delete rentals.');
+      return;
+    }
+
     if (!window.confirm('Are you sure you want to delete this rental?')) {
       return;
     }
@@ -709,7 +736,18 @@ const Rentals = () => {
                           {getPaymentStatusBadge(rental.payment_status)}
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                          {rental.total_amount ? `${rental.total_amount} MAD` : 'N/A'}
+                          <div className="flex items-center gap-2">
+                            <span>{rental.total_amount ? `${rental.total_amount} MAD` : 'N/A'}</span>
+                            {rental.approval_status === 'pending' && rental.pending_total_request && (
+                              <span 
+                                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full bg-yellow-50 text-yellow-700 border border-yellow-300"
+                                title={`Pending approval for ${rental.pending_total_request} MAD`}
+                              >
+                                <Clock className="w-3 h-3" />
+                                Pending
+                              </span>
+                            )}
+                          </div>
                         </td>
                         <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                           <div className="flex space-x-2">
@@ -761,14 +799,16 @@ const Rentals = () => {
                               </button>
                             )}
                             
-                            <button
-                              onClick={() => handleDeleteRental(rental.id)}
-                              className={`text-red-600 hover:text-red-900 ${isImmutable ? 'text-gray-400 cursor-not-allowed opacity-50' : ''}`}
-                              title={isImmutable ? "Cannot delete active or completed rentals" : "Delete rental"}
-                              disabled={isImmutable}
-                            >
-                              Delete
-                            </button>
+                            {canDelete() && (
+                              <button
+                                onClick={() => handleDeleteRental(rental.id)}
+                                className={`text-red-600 hover:text-red-900 ${isImmutable ? 'text-gray-400 cursor-not-allowed opacity-50' : ''}`}
+                                title={isImmutable ? "Cannot delete active or completed rentals" : "Delete rental"}
+                                disabled={isImmutable}
+                              >
+                                Delete
+                              </button>
+                            )}
                           </div>
                         </td>
                       </tr>

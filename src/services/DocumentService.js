@@ -3,15 +3,11 @@ import { supabase } from '../lib/supabase';
 const BUCKET_NAME = 'vehicle-documents';
 
 /**
- * Upload a document to Supabase storage - DIRECT CLIENT UPLOAD (Vercel-compatible)
- * Uses upsert: true to prevent 400 errors on duplicate filenames
+ * Upload a document to Supabase storage (same pattern as imageUpload.js)
  */
 export const uploadDocument = async (file, vehicleId) => {
   try {
-    // Log file size for debugging
-    const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-    console.log(`🔄 DocumentService: Starting document upload: ${file.name}`);
-    console.log(`📊 File size: ${fileSizeMB} MB`);
+    console.log('🔄 DocumentService: Starting document upload:', file.name);
     
     // Validate file
     validateDocumentFile(file);
@@ -24,13 +20,12 @@ export const uploadDocument = async (file, vehicleId) => {
     
     console.log('📁 Uploading to path:', fileName);
     
-    // CRITICAL FIX: Upload file directly to Supabase storage with upsert: true
-    // This bypasses any API routes and prevents Vercel's 4.5MB payload limit
+    // Upload file directly to Supabase storage (same approach as imageUpload.js)
     const { data, error } = await supabase.storage
       .from(BUCKET_NAME)
       .upload(fileName, file, {
         cacheControl: '3600',
-        upsert: true, // ADDED: Prevent 400 errors on duplicate filenames
+        upsert: false,
         contentType: file.type
       });
 
@@ -196,12 +191,9 @@ const getCategoryFromType = (type) => {
 
 /**
  * Validate document file before upload
- * FIXED: Increased limit from 10MB to 50MB to match Supabase default
  */
 const validateDocumentFile = (file) => {
-  const maxSize = 50 * 1024 * 1024; // 50MB (FIXED: was 10MB)
-  const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-  
+  const maxSize = 10 * 1024 * 1024; // 10MB
   const allowedTypes = [
     'application/pdf',
     'application/msword',
@@ -216,7 +208,7 @@ const validateDocumentFile = (file) => {
   ];
 
   if (file.size > maxSize) {
-    throw new Error(`Document ${file.name} is too large (${fileSizeMB} MB). Maximum size is 50 MB. Please compress the file and try again.`);
+    throw new Error(`Document ${file.name} is too large. Maximum size is 10MB.`);
   }
 
   if (!allowedTypes.includes(file.type)) {

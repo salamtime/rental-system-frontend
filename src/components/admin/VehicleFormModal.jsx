@@ -47,7 +47,7 @@ const VehicleFormModal = ({
     seating_capacity: 1,
     color: '',
     plate_number: '',
-    status: 'Available',
+    status: 'available',
     current_odometer_km: 0,
     engine_hours: 0,
     last_oil_change_date: '',
@@ -83,7 +83,7 @@ const VehicleFormModal = ({
         seating_capacity: vehicle.seating_capacity || 1,
         color: vehicle.color || '',
         plate_number: vehicle.plate_number || '',
-        status: vehicle.status || 'Available',
+        status: vehicle.status || 'available',
         current_odometer_km: vehicle.current_odometer_km || 0,
         engine_hours: vehicle.engine_hours || 0,
         last_oil_change_date: vehicle.last_oil_change_date || '',
@@ -408,7 +408,7 @@ const VehicleFormModal = ({
           seating_capacity: 1,
           color: '',
           plate_number: '',
-          status: 'Available',
+          status: 'available',
           current_odometer_km: 0,
           engine_hours: 0,
           last_oil_change_date: '',
@@ -552,12 +552,15 @@ const VehicleFormModal = ({
                     onChange={(e) => handleInputChange('status', e.target.value)}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   >
-                    <option value="Available">Available</option>
-                    <option value="Rented">Rented</option>
-                    <option value="In Service">In Service</option>
-                    <option value="Maintenance">Maintenance</option>
-                    <option value="Out of Order">Out of Order</option>
+                    <option value="available">Available</option>
+                    <option value="scheduled">Scheduled</option>
+                    <option value="rented">Rented</option>
+                    <option value="maintenance">Maintenance</option>
+                    <option value="out_of_service">Out of Service</option>
                   </select>
+                  <p className="text-xs text-gray-500 mt-1">
+                    <strong>Scheduled:</strong> Vehicle has upcoming reservations
+                  </p>
                 </div>
               </div>
             </CardContent>

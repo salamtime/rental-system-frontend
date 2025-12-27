@@ -33,10 +33,23 @@ const SmartVehicleSelector = ({
       setLoading(true);
       const vehicleData = await VehicleService.getAllVehicles();
       
-      const activeVehicles = vehicleData.filter(v => v.status !== 'maintenance' && v.status !== 'Out of Service');
+      // CRITICAL FIX: Filter out vehicles that are NOT available for rental
+      // Only show vehicles with 'available' status
+      const activeVehicles = vehicleData.filter(v => {
+        const status = (v.status || '').toLowerCase();
+        // Only include vehicles with 'available' status
+        const isAvailable = status === 'available';
+        
+        if (!isAvailable) {
+          console.log(`🚫 FILTERED OUT: Vehicle ${v.id} (${v.name}) - Status: ${v.status}`);
+        }
+        
+        return isAvailable;
+      });
 
       console.log('🚗 Loaded all vehicles:', vehicleData.length);
-      console.log('🔧 Filtered out maintenance & out of service vehicles. Active vehicles for checking:', activeVehicles.length);
+      console.log('✅ Filtered to available vehicles only:', activeVehicles.length);
+      console.log('🔧 Filtered out (maintenance/out_of_service/rented/reserved):', vehicleData.length - activeVehicles.length);
       
       setVehicles(activeVehicles || []);
       setError(null);
@@ -67,7 +80,7 @@ const SmartVehicleSelector = ({
     try {
       for (const vehicle of vehicles) {
         try {
-          console.log(`🔍 Checking vehicle ${vehicle.id} (${vehicle.name})`);
+          console.log(`🔍 Checking vehicle ${vehicle.id} (${vehicle.name}) - Status: ${vehicle.status}`);
           
           const availabilityResult = await TransactionalRentalService.checkVehicleAvailability(
             vehicle.id,
@@ -138,7 +151,8 @@ const SmartVehicleSelector = ({
     console.log('🚗 Vehicle selection attempt:', {
       vehicleId,
       vehicleName: vehicle?.name,
-      status,
+      vehicleStatus: vehicle?.status,
+      availabilityStatus: status,
       hasConflict: status === 'conflict'
     });
 
@@ -391,7 +405,8 @@ const SmartVehicleSelector = ({
       {vehicles.length === 0 && !loading && (
         <div className="text-center py-8">
           <Car className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <p className="text-gray-600">No vehicles found.</p>
+          <p className="text-gray-600">No available vehicles found.</p>
+          <p className="text-sm text-gray-500 mt-2">All vehicles are currently in maintenance, out of service, or already rented.</p>
           <button
             onClick={loadVehicles}
             className="mt-2 text-blue-600 hover:text-blue-800 underline"

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useSelector } from 'react-redux';
 import { selectVehicles } from '../../store/slices/vehiclesSlice';
-import { User, Calendar, Car, MapPin, CreditCard, FileText, UserSearch, Scan, Upload, X } from 'lucide-react';
+import { User, Calendar, Car, MapPin, CreditCard, FileText, UserSearch } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
 const RentalForm = ({ onSubmit, initialData = null, isLoading = false, scannedCustomerData = null }) => {
@@ -35,14 +35,11 @@ const RentalForm = ({ onSubmit, initialData = null, isLoading = false, scannedCu
     helmet_included: false,
     gear_included: false,
     auto_activate: true,
-    notes: '',
-    id_scan_url: '',
-    customer_id_image: ''
+    notes: ''
   });
 
   const [errors, setErrors] = useState({});
   const vehicles = useSelector(selectVehicles) || [];
-  const [manualFiles, setManualFiles] = useState([]);
   
   const [customers, setCustomers] = useState([]);
   const [rentals, setRentals] = useState([]);
@@ -117,16 +114,8 @@ const RentalForm = ({ onSubmit, initialData = null, isLoading = false, scannedCu
         helmet_included: initialData.helmet_included || false,
         gear_included: initialData.gear_included || false,
         auto_activate: initialData.auto_activate !== undefined ? initialData.auto_activate : true,
-        notes: initialData.notes || '',
-        id_scan_url: initialData.id_scan_url || '',
-        customer_id_image: initialData.customer_id_image || ''
+        notes: initialData.notes || ''
       });
-      
-      // Initialize manualFiles if customer_id_image exists
-      if (initialData.customer_id_image) {
-        const urls = initialData.customer_id_image.split(',').filter(url => url.trim());
-        setManualFiles(urls);
-      }
     }
   }, [initialData]);
 
@@ -224,60 +213,6 @@ const RentalForm = ({ onSubmit, initialData = null, isLoading = false, scannedCu
         vehicle_id: vehicleId
       }));
     }
-  };
-
-  // Multi-Upload Handler for Manual Import
-  const handleManualUpload = async (e) => {
-    const files = Array.from(e.target.files);
-    if (files.length === 0) return;
-
-    // Logic to prevent more than 3 images
-    const totalAfterUpload = manualFiles.length + files.length;
-    if (totalAfterUpload > 3) {
-      alert("Maximum 3 images allowed for manual import");
-      return;
-    }
-
-    const uploadedUrls = [];
-
-    for (const file of files) {
-      const fileName = `manual_${Date.now()}_${file.name}`;
-      const { data, error } = await supabase.storage
-        .from('customer-documents')
-        .upload(fileName, file);
-
-      if (error) {
-        console.error('Upload error:', error);
-        alert(`Failed to upload ${file.name}: ${error.message}`);
-        continue;
-      }
-
-      if (data) {
-        const { data: { publicUrl } } = supabase.storage
-          .from('customer-documents')
-          .getPublicUrl(fileName);
-        uploadedUrls.push(publicUrl);
-      }
-    }
-
-    const newFileList = [...manualFiles, ...uploadedUrls];
-    setManualFiles(newFileList);
-
-    // Update formData: Join the array into a comma-separated string for the DB column
-    setFormData(prev => ({
-      ...prev,
-      customer_id_image: newFileList.join(',')
-    }));
-  };
-
-  // Remove manual image
-  const removeManualImage = (index) => {
-    const filtered = manualFiles.filter((_, idx) => idx !== index);
-    setManualFiles(filtered);
-    setFormData(prev => ({ 
-      ...prev, 
-      customer_id_image: filtered.join(',') 
-    }));
   };
 
   // Validation
@@ -418,50 +353,6 @@ const RentalForm = ({ onSubmit, initialData = null, isLoading = false, scannedCu
           <User className="h-5 w-5" />
           Customer Information
         </div>
-
-        {/* Two-Track Upload System */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          {/* SCAN TRACK */}
-          <div className={`p-6 rounded-[2rem] border-2 border-dashed flex flex-col items-center gap-2 ${formData.id_scan_url ? 'border-green-500 bg-green-50' : 'border-gray-200'}`}>
-            <div className="flex flex-col items-center">
-              <Scan size={40} className={formData.id_scan_url ? 'text-green-500' : 'text-gray-400'} />
-              <p className="font-black text-xs uppercase mt-2">Scan ID (to Scan URL)</p>
-            </div>
-            {formData.id_scan_url && <p className="text-[10px] text-green-600 font-bold truncate w-full text-center">Scan Received ✓</p>}
-          </div>
-
-          {/* MANUAL TRACK (Multi-Upload) */}
-          <div className={`p-6 rounded-[2rem] border-2 border-dashed flex flex-col items-center gap-2 ${manualFiles.length > 0 ? 'border-blue-500 bg-blue-50' : 'border-gray-200'}`}>
-            <label className="cursor-pointer flex flex-col items-center">
-              <input 
-                type="file" 
-                multiple 
-                className="hidden" 
-                onChange={handleManualUpload} 
-                accept="image/*" 
-              />
-              <Upload size={40} className={manualFiles.length > 0 ? 'text-blue-500' : 'text-gray-400'} />
-              <p className="font-black text-xs uppercase mt-2">Import Images ({manualFiles.length}/3)</p>
-            </label>
-            
-            {/* Thumbnails */}
-            <div className="flex gap-2 mt-2 flex-wrap justify-center">
-              {manualFiles.map((url, i) => (
-                <div key={i} className="w-10 h-10 rounded-lg border-2 border-white shadow-sm overflow-hidden relative group">
-                  <img src={url} className="w-full h-full object-cover" alt={`Manual upload ${i + 1}`} />
-                  <button 
-                    type="button"
-                    onClick={() => removeManualImage(i)}
-                    className="absolute inset-0 bg-red-500/80 text-white opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center font-bold text-xl"
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="relative" ref={customerSearchRef}>
             <label className="block text-sm font-medium text-gray-700 mb-1">

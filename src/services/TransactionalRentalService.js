@@ -18,6 +18,14 @@ import { supabase } from '../lib/supabase.js';
  * - AUTHORITY LOGIC: Form data takes precedence over database data for contact fields
  * - HEALING FIX: Master customer record updated with correct contact info after rental creation
  * - FINAL SANITIZATION FIX: Protected customer contact fields from final null conversion
+ * - VEHICLE STATUS CHECK: Verify vehicle status before checking rental overlaps
+ * - AVAILABILITY LOGIC FIX: Strict conflict detection - return immediately when conflicts found
+ * - AUTO-STATUS UPDATE: Automatic vehicle status updates based on rental lifecycle
+ * - SCHEDULED STATUS: Added support for "scheduled" status for vehicles with upcoming reservations
+ * - ENHANCED AUTO-STATUS: Vehicle status updates to "scheduled" when rental status is "scheduled"
+ * - START RENTAL FIX: Allow starting rentals when vehicle is "scheduled" for that specific rental
+ * - DELETE RENTAL FIX: Automatically revert vehicle status to "available" when rental is deleted
+ * - CRITICAL STATUS FIELD FIX: Removed all "status" field references to prevent database column errors
  */
 class TransactionalRentalService {
   
@@ -45,6 +53,32 @@ class TransactionalRentalService {
     }
     // Customer ID should start with 'cust_' prefix
     return customerId.startsWith('cust_');
+  }
+
+  /**
+   * AUTO-STATUS UPDATE: Update vehicle status in database
+   * @param {number} vehicleId - The vehicle ID to update
+   * @param {string} newStatus - The new status ('available', 'scheduled', 'rented', 'maintenance', 'out_of_service')
+   */
+  static async updateVehicleStatus(vehicleId, newStatus) {
+    console.log('🚗 AUTO-STATUS: Updating vehicle status:', { vehicleId, newStatus });
+    
+    try {
+      const { error } = await supabase
+        .from('saharax_0u4w4d_vehicles')
+        .update({ status: newStatus })
+        .eq('id', vehicleId);
+      
+      if (error) {
+        console.error('❌ AUTO-STATUS: Failed to update vehicle status:', error);
+        throw new Error(`Failed to update vehicle status: ${error.message}`);
+      }
+      
+      console.log('✅ AUTO-STATUS: Vehicle status updated successfully to:', newStatus);
+    } catch (error) {
+      console.error('❌ AUTO-STATUS: Error updating vehicle status:', error);
+      throw error;
+    }
   }
 
   /**
@@ -379,6 +413,12 @@ class TransactionalRentalService {
 
     console.log('🧹 Starting comprehensive data sanitization for:', rentalData);
 
+    // CRITICAL STATUS FIELD FIX: Remove any "status" field immediately
+    if ('status' in sanitized) {
+      console.warn('🚨 CRITICAL FIX: Removing invalid "status" field from rental data');
+      delete sanitized.status;
+    }
+
     // List of ALL possible date fields that need validation (convert empty strings to null)
     const dateFields = [
       'rental_start_date',
@@ -480,6 +520,12 @@ class TransactionalRentalService {
       }
     });
 
+    // CRITICAL STATUS FIELD FIX: Final check to ensure "status" field is not present
+    if ('status' in sanitized) {
+      console.error('🚨 CRITICAL ERROR: "status" field still present after sanitization! Removing it now.');
+      delete sanitized.status;
+    }
+
     console.log('✅ Comprehensive data sanitization completed:', sanitized);
     return sanitized;
   }
@@ -560,6 +606,9 @@ class TransactionalRentalService {
    * FINAL CRITICAL FIX: Create rental with GUARANTEED customer_id foreign key assignment
    * AUTHORITY LOGIC: Form data takes precedence over database data
    * HEALING FIX: Master customer record updated after successful rental creation
+   * AUTO-STATUS UPDATE: Automatically update vehicle status based on rental status
+   * ENHANCED: Vehicle status updates to "scheduled" when rental status is "scheduled"
+   * CRITICAL STATUS FIELD FIX: Removed all "status" field handling to prevent database errors
    */
   static async createRentalWithTransaction(rentalData) {
     console.log('🆕 FINAL CRITICAL FIX: Starting rental creation with GUARANTEED customer_id linkage:', rentalData);
@@ -568,6 +617,12 @@ class TransactionalRentalService {
       // STEP 1: Validate input data
       if (!rentalData) {
         throw new Error('Rental data is required');
+      }
+
+      // CRITICAL STATUS FIELD FIX: Remove "status" field immediately if present
+      if ('status' in rentalData) {
+        console.warn('🚨 CRITICAL FIX: Removing invalid "status" field from input data');
+        delete rentalData.status;
       }
 
       // STEP 2: FINAL CRITICAL FIX - Validate customer_id BEFORE any processing
@@ -656,6 +711,13 @@ class TransactionalRentalService {
       delete dbRentalData.rental_start_at;
       delete dbRentalData.rental_end_at;
       
+      // CRITICAL FIX: Remove fields that do not exist in the rentals table
+      delete dbRentalData.status; // CRITICAL: This field does NOT exist in database
+      delete dbRentalData.linked_display_id; // This is not a database column
+      delete dbRentalData.booking_range;
+      delete dbRentalData.vehicle;
+      console.log('🧹 CRITICAL FIX: Removed non-existent database fields: status, linked_display_id, booking_range, vehicle');
+      
       // FINAL CRITICAL FIX: Double-check customer_id is in final payload
       if (!dbRentalData.customer_id) {
         console.error('❌ FINAL CRITICAL FIX: customer_id was lost during data processing');
@@ -667,7 +729,6 @@ class TransactionalRentalService {
       console.log('🎯 FINAL CRITICAL FIX: customer_id field confirmed:', dbRentalData.customer_id);
       console.log('📧 customer_email field confirmed:', dbRentalData.customer_email);
       console.log('📞 customer_phone field confirmed:', dbRentalData.customer_phone);
-      console.log('🔗 LINKAGE FIX: linked_display_id field set to:', dbRentalData.linked_display_id);
       
       // STEP 7: Final validation - ensure required fields are present
       if (!dbRentalData.rental_start_date || !dbRentalData.rental_end_date) {
@@ -733,6 +794,12 @@ class TransactionalRentalService {
         }
       });
 
+      // CRITICAL STATUS FIELD FIX: Absolutely final check before database insertion
+      if ('status' in finalSanitizedData) {
+        console.error('🚨🚨🚨 CRITICAL EMERGENCY: "status" field detected in final payload! Removing immediately!');
+        delete finalSanitizedData.status;
+      }
+
       console.log('🧼 FINAL SANITIZED DATA:', JSON.stringify(finalSanitizedData, null, 2));
 
       const { data: rental, error: insertError } = await supabase
@@ -743,15 +810,15 @@ class TransactionalRentalService {
       
       if (insertError) {
         console.error('❌ FINAL CRITICAL FIX: Database insertion failed:', insertError);
-        console.error('❌ FINAL CRITICAL FIX: Data that caused the error:', JSON.stringify(dbRentalData, null, 2));
+        console.error('❌ FINAL CRITICAL FIX: Data that caused the error:', JSON.stringify(finalSanitizedData, null, 2));
         
         // Enhanced error handling for specific constraint violations
         if (insertError.message.includes('payment_status_check')) {
-          throw new Error(`Payment status validation failed. Valid values are: paid, partial, unpaid, overdue, refunded. Received: ${dbRentalData.payment_status}`);
+          throw new Error(`Payment status validation failed. Valid values are: paid, partial, unpaid, overdue, refunded. Received: ${finalSanitizedData.payment_status}`);
         }
         
         if (insertError.message.includes('rental_status_check')) {
-          throw new Error(`Rental status validation failed. Valid values are: scheduled, active, completed, cancelled, confirmed. Received: ${dbRentalData.rental_status}`);
+          throw new Error(`Rental status validation failed. Valid values are: scheduled, active, completed, cancelled, confirmed. Received: ${finalSanitizedData.rental_status}`);
         }
         
         if (insertError.message.includes('invalid input syntax for type date')) {
@@ -774,9 +841,26 @@ class TransactionalRentalService {
       console.log('🎯 FINAL CRITICAL FIX: Confirmed customer_id saved to database:', rental.customer_id);
       console.log('📧 Confirmed customer_email saved to database:', rental.customer_email);
       console.log('📞 Confirmed customer_phone saved to database:', rental.customer_phone);
-      console.log('🔗 LINKAGE FIX: Rental linked_display_id stored as:', rental.linked_display_id);
       
-      // STEP 10: HEALING FIX - Update master customer record with correct contact info
+      // STEP 10: ENHANCED AUTO-STATUS UPDATE - Update vehicle status based on rental status
+      if (rental.vehicle_id) {
+        try {
+          if (rental.rental_status === 'scheduled') {
+            console.log('🚗 AUTO-STATUS: Rental is scheduled, updating vehicle status to "scheduled"...');
+            await this.updateVehicleStatus(rental.vehicle_id, 'scheduled');
+            console.log('✅ AUTO-STATUS: Vehicle marked as scheduled');
+          } else if (rental.rental_status === 'active' || rental.rental_status === 'confirmed') {
+            console.log('🚗 AUTO-STATUS: Rental is active, updating vehicle status to "rented"...');
+            await this.updateVehicleStatus(rental.vehicle_id, 'rented');
+            console.log('✅ AUTO-STATUS: Vehicle marked as rented');
+          }
+        } catch (statusError) {
+          console.warn('⚠️ AUTO-STATUS: Failed to update vehicle status (non-critical):', statusError.message);
+          // Don't fail the rental creation if status update fails
+        }
+      }
+      
+      // STEP 11: HEALING FIX - Update master customer record with correct contact info
       if (finalEmail || finalPhone) {
         console.log('🏥 HEALING FIX: Updating master customer record with correct contact info...');
         const { error: updateError } = await supabase
@@ -814,6 +898,8 @@ class TransactionalRentalService {
   
   /**
    * FIXED: Update rental with proper validation and constraint compliance + Customer ID Linkage
+   * AUTO-STATUS UPDATE: Automatically update vehicle status based on rental status
+   * ENHANCED: Vehicle status updates to "scheduled" when rental status is "scheduled"
    */
   static async updateRental(rentalData) {
     console.log('✏️ FIXED: Starting rental update with proper validation + customer linkage:', rentalData);
@@ -821,6 +907,12 @@ class TransactionalRentalService {
     try {
       if (!rentalData.id) {
         throw new Error('Rental ID is required for updates');
+      }
+      
+      // CRITICAL STATUS FIELD FIX: Remove "status" field if present
+      if ('status' in rentalData) {
+        console.warn('🚨 CRITICAL FIX: Removing invalid "status" field from update data');
+        delete rentalData.status;
       }
       
       // STEP 1: Sanitize and validate all fields
@@ -849,8 +941,13 @@ class TransactionalRentalService {
       delete dbRentalData.rental_start_at;
       delete dbRentalData.rental_end_at;
       
+      // CRITICAL STATUS FIELD FIX: Remove invalid fields
+      delete dbRentalData.status;
+      delete dbRentalData.linked_display_id;
+      delete dbRentalData.booking_range;
+      delete dbRentalData.vehicle;
+      
       console.log('🔧 FIXED: Mapped rental data for update (with linkage):', dbRentalData);
-      console.log('🔗 LINKAGE FIX: Updated linked_display_id field:', dbRentalData.linked_display_id);
       
       // STEP 4: CRITICAL FIX - Availability check for updates (excluding current rental)
       if (dbRentalData.vehicle_id && dbRentalData.rental_start_date && dbRentalData.rental_end_date) {
@@ -903,7 +1000,28 @@ class TransactionalRentalService {
       }
       
       console.log('✅ FIXED: Rental updated successfully with customer linkage:', rental);
-      console.log('🔗 LINKAGE FIX: Updated rental linked_display_id:', rental.linked_display_id);
+      
+      // STEP 6: ENHANCED AUTO-STATUS UPDATE - Update vehicle status based on rental status
+      if (rental.vehicle_id) {
+        try {
+          if (rental.rental_status === 'completed' || rental.rental_status === 'cancelled') {
+            console.log('🚗 AUTO-STATUS: Rental is completed/cancelled, updating vehicle status to "available"...');
+            await this.updateVehicleStatus(rental.vehicle_id, 'available');
+            console.log('✅ AUTO-STATUS: Vehicle marked as available');
+          } else if (rental.rental_status === 'scheduled') {
+            console.log('🚗 AUTO-STATUS: Rental is scheduled, updating vehicle status to "scheduled"...');
+            await this.updateVehicleStatus(rental.vehicle_id, 'scheduled');
+            console.log('✅ AUTO-STATUS: Vehicle marked as scheduled');
+          } else if (rental.rental_status === 'active' || rental.rental_status === 'confirmed') {
+            console.log('🚗 AUTO-STATUS: Rental is active, updating vehicle status to "rented"...');
+            await this.updateVehicleStatus(rental.vehicle_id, 'rented');
+            console.log('✅ AUTO-STATUS: Vehicle marked as rented');
+          }
+        } catch (statusError) {
+          console.warn('⚠️ AUTO-STATUS: Failed to update vehicle status (non-critical):', statusError.message);
+          // Don't fail the rental update if status update fails
+        }
+      }
       
       return {
         success: true,
@@ -923,25 +1041,103 @@ class TransactionalRentalService {
   }
   
   /**
-   * CRITICAL FIX: Check vehicle availability for given date range with proper UUID handling
+   * AVAILABILITY LOGIC FIX: Check vehicle availability with strict conflict detection
+   * ENHANCED: Now checks vehicle status BEFORE checking rental overlaps
+   * CRITICAL: Returns immediately when conflicts are found - no next available date calculation
+   * START RENTAL FIX: Allow checking availability for a specific rental (bypass status check)
    */
-  static async checkVehicleAvailability(vehicleId, startDate, endDate, startTime = null, endTime = null, excludeRentalId = null) {
-    console.log('🔍 CRITICAL FIX: Checking vehicle availability with parameters:', {
+  static async checkVehicleAvailability(vehicleId, startDate, endDate, startTime = null, endTime = null, excludeRentalId = null, forRentalId = null) {
+    console.log('🔍 AVAILABILITY CHECK: Starting with parameters:', {
       vehicleId,
       startDate,
       endDate,
       startTime,
       endTime,
       excludeRentalId,
-      excludeRentalIdType: typeof excludeRentalId
+      excludeRentalIdType: typeof excludeRentalId,
+      forRentalId
     });
     
     try {
-      // CRITICAL FIX: Sanitize excludeRentalId to prevent UUID syntax errors
-      const sanitizedExcludeRentalId = this.sanitizeExcludeRentalId(excludeRentalId);
-      console.log('🔍 CRITICAL FIX: Sanitized excludeRentalId:', sanitizedExcludeRentalId);
+      // STEP 1: VEHICLE STATUS CHECK - Check vehicle status BEFORE checking rental overlaps
+      // EXCEPTION: Skip status check if forRentalId is provided (starting an existing rental)
+      if (!forRentalId) {
+        console.log('🚗 VEHICLE STATUS CHECK: Verifying vehicle status...');
+        const { data: vehicle, error: vehicleError } = await supabase
+          .from('saharax_0u4w4d_vehicles')
+          .select('id, name, status')
+          .eq('id', vehicleId)
+          .single();
+        
+        if (vehicleError) {
+          console.error('❌ VEHICLE STATUS CHECK: Error fetching vehicle:', vehicleError);
+          return {
+            isAvailable: false,
+            error: `Vehicle lookup failed: ${vehicleError.message}`,
+            message: 'Error checking vehicle status'
+          };
+        }
+        
+        if (!vehicle) {
+          console.error('❌ VEHICLE STATUS CHECK: Vehicle not found:', vehicleId);
+          return {
+            isAvailable: false,
+            reason: `Vehicle with ID ${vehicleId} not found`,
+            message: 'Vehicle not found'
+          };
+        }
+        
+        const vehicleStatus = (vehicle.status || '').toLowerCase();
+        console.log('🚗 VEHICLE STATUS CHECK: Vehicle status:', vehicleStatus);
+        
+        // CRITICAL: Only 'available' status vehicles can be booked
+        if (vehicleStatus !== 'available') {
+          console.log(`❌ VEHICLE STATUS CHECK: Vehicle is not available - Status: ${vehicle.status}`);
+          return {
+            isAvailable: false,
+            reason: `Vehicle "${vehicle.name}" is currently ${vehicle.status}. Only vehicles with "Available" status can be booked.`,
+            vehicleStatus: vehicle.status,
+            message: 'Vehicle status prevents booking'
+          };
+        }
+        
+        console.log('✅ VEHICLE STATUS CHECK: Vehicle status is "available", proceeding to check rental overlaps...');
+      } else {
+        console.log('🚗 START RENTAL FIX: Skipping vehicle status check - starting existing rental:', forRentalId);
+        
+        // Verify the rental exists and belongs to this vehicle
+        const { data: rental, error: rentalError } = await supabase
+          .from('app_4c3a7a6153_rentals')
+          .select('id, vehicle_id, rental_status')
+          .eq('id', forRentalId)
+          .single();
+        
+        if (rentalError || !rental) {
+          console.error('❌ START RENTAL FIX: Rental not found:', forRentalId);
+          return {
+            isAvailable: false,
+            reason: 'Rental not found',
+            message: 'Cannot start non-existent rental'
+          };
+        }
+        
+        if (rental.vehicle_id !== vehicleId) {
+          console.error('❌ START RENTAL FIX: Vehicle mismatch:', { rentalVehicle: rental.vehicle_id, requestedVehicle: vehicleId });
+          return {
+            isAvailable: false,
+            reason: 'Vehicle mismatch',
+            message: 'Rental does not belong to this vehicle'
+          };
+        }
+        
+        console.log('✅ START RENTAL FIX: Rental verified, proceeding to check conflicts...');
+      }
       
-      // Build the query to find conflicting rentals
+      // STEP 2: CRITICAL FIX: Sanitize excludeRentalId to prevent UUID syntax errors
+      const sanitizedExcludeRentalId = this.sanitizeExcludeRentalId(excludeRentalId);
+      console.log('🔍 SANITIZATION: Sanitized excludeRentalId:', sanitizedExcludeRentalId);
+      
+      // STEP 3: Build the query to find conflicting rentals
       let query = supabase
         .from('app_4c3a7a6153_rentals')
         .select('id, rental_start_date, rental_end_date, rental_status')
@@ -950,67 +1146,71 @@ class TransactionalRentalService {
       
       // CRITICAL FIX: Only exclude rental if we have a valid UUID
       if (sanitizedExcludeRentalId) {
-        console.log('🔍 CRITICAL FIX: Excluding rental ID from availability check:', sanitizedExcludeRentalId);
+        console.log('🔍 EXCLUSION: Excluding rental ID from availability check:', sanitizedExcludeRentalId);
         query = query.neq('id', sanitizedExcludeRentalId);
       } else {
-        console.log('🔍 CRITICAL FIX: No rental ID to exclude (new rental or invalid ID)');
+        console.log('🔍 EXCLUSION: No rental ID to exclude (new rental or invalid ID)');
+      }
+      
+      // START RENTAL FIX: Also exclude the rental we're trying to start
+      if (forRentalId && this.isValidUUID(forRentalId)) {
+        console.log('🔍 START RENTAL FIX: Excluding the rental being started:', forRentalId);
+        query = query.neq('id', forRentalId);
       }
       
       const { data: existingRentals, error } = await query;
       
       if (error) {
-        console.error('❌ CRITICAL FIX: Error checking availability:', error);
+        console.error('❌ QUERY ERROR: Error checking availability:', error);
         throw new Error(`Availability check failed: ${error.message}`);
       }
       
-      console.log('📊 CRITICAL FIX: Found existing rentals:', existingRentals?.length || 0);
+      console.log('📊 QUERY RESULT: Found existing rentals:', existingRentals?.length || 0);
       
-      // Check for date conflicts
+      // STEP 4: AVAILABILITY LOGIC FIX - Check for date conflicts with strict overlap detection
       const conflicts = existingRentals?.filter(rental => {
         const existingStart = new Date(rental.rental_start_date);
         const existingEnd = new Date(rental.rental_end_date);
         const newStart = new Date(startDate);
         const newEnd = new Date(endDate);
         
-        // Check if date ranges overlap
-        const hasOverlap = newStart <= existingEnd && newEnd >= existingStart;
+        // STRICT OVERLAP CHECK: newStart < existingEnd AND newEnd > existingStart
+        const hasOverlap = newStart < existingEnd && newEnd > existingStart;
         
         if (hasOverlap) {
-          console.log('⚠️ CRITICAL FIX: Date conflict detected:', {
+          console.log('⚠️ CONFLICT DETECTED:', {
             existing: { start: rental.rental_start_date, end: rental.rental_end_date },
-            new: { start: startDate, end: endDate }
+            requested: { start: startDate, end: endDate },
+            overlap: 'YES'
           });
         }
         
         return hasOverlap;
       }) || [];
       
-      const isAvailable = conflicts.length === 0;
+      console.log('🔍 CONFLICT ANALYSIS: Total conflicts found:', conflicts.length);
       
-      if (isAvailable) {
-        console.log('✅ CRITICAL FIX: Vehicle is available for the requested period');
-        return {
-          isAvailable: true,
-          conflicts: [],
-          message: 'Vehicle is available'
-        };
-      } else {
-        console.log('❌ CRITICAL FIX: Vehicle has conflicts:', conflicts.length);
-        
-        // Find next available date
-        const nextAvailable = await this.findNextAvailableDate(vehicleId, startDate, endDate);
-        
+      // CRITICAL: If ANY conflicts exist, return immediately with isAvailable: false
+      if (conflicts.length > 0) {
+        console.log('❌ AVAILABILITY RESULT: Vehicle is NOT available - conflicts exist');
         return {
           isAvailable: false,
           conflicts: conflicts,
           reason: `Vehicle is already booked during this period. Found ${conflicts.length} conflicting rental(s).`,
-          nextAvailable: nextAvailable,
           message: 'Vehicle is not available'
         };
       }
       
+      // Only reach here if NO conflicts exist
+      console.log('✅ AVAILABILITY RESULT: Vehicle is available for the requested period');
+      return {
+        isAvailable: true,
+        conflicts: [],
+        message: 'Vehicle is available'
+      };
+      
     } catch (error) {
-      console.error('❌ CRITICAL FIX: Availability check error:', error);
+      console.error('❌ AVAILABILITY CHECK ERROR:', error);
       return {
         isAvailable: false,
         error: error.message,
@@ -1021,9 +1221,10 @@ class TransactionalRentalService {
   
   /**
    * Find next available date for a vehicle
+   * NOTE: This is called separately, NOT during the main availability check
    */
   static async findNextAvailableDate(vehicleId, requestedStartDate, requestedEndDate) {
-    console.log('🔍 Finding next available date for vehicle:', vehicleId);
+    console.log('🔍 NEXT AVAILABLE: Finding next available date for vehicle:', vehicleId);
     
     try {
       const requestedStart = new Date(requestedStartDate);
@@ -1051,16 +1252,16 @@ class TransactionalRentalService {
         );
         
         if (availability.isAvailable) {
-          console.log('✅ Found next available date:', testStartStr);
+          console.log('✅ NEXT AVAILABLE: Found next available date:', testStartStr);
           return testStartStr;
         }
       }
       
-      console.log('⚠️ No available dates found in next 60 days');
+      console.log('⚠️ NEXT AVAILABLE: No available dates found in next 60 days');
       return null;
       
     } catch (error) {
-      console.error('❌ Error finding next available date:', error);
+      console.error('❌ NEXT AVAILABLE ERROR:', error);
       return null;
     }
   }
@@ -1138,27 +1339,69 @@ class TransactionalRentalService {
   }
   
   /**
-   * Delete rental
+   * DELETE RENTAL FIX: Delete rental and automatically revert vehicle status to "available"
    */
   static async deleteRental(id) {
-    console.log('🗑️ Deleting rental:', id);
+    console.log('🗑️ DELETE RENTAL FIX: Deleting rental:', id);
     
     try {
-      const { error } = await supabase
+      // STEP 1: Fetch the rental to get vehicle_id before deletion
+      console.log('🔍 DELETE RENTAL FIX: Fetching rental details before deletion...');
+      const { data: rental, error: fetchError } = await supabase
+        .from('app_4c3a7a6153_rentals')
+        .select('id, vehicle_id, rental_status')
+        .eq('id', id)
+        .single();
+      
+      if (fetchError) {
+        console.error('❌ DELETE RENTAL FIX: Error fetching rental:', fetchError);
+        throw new Error(`Failed to fetch rental before deletion: ${fetchError.message}`);
+      }
+      
+      if (!rental) {
+        console.error('❌ DELETE RENTAL FIX: Rental not found:', id);
+        throw new Error(`Rental with ID ${id} not found`);
+      }
+      
+      console.log('✅ DELETE RENTAL FIX: Rental details retrieved:', {
+        id: rental.id,
+        vehicle_id: rental.vehicle_id,
+        rental_status: rental.rental_status
+      });
+      
+      // STEP 2: Delete the rental
+      console.log('🗑️ DELETE RENTAL FIX: Proceeding with rental deletion...');
+      const { error: deleteError } = await supabase
         .from('app_4c3a7a6153_rentals')
         .delete()
         .eq('id', id);
       
-      if (error) {
-        console.error('❌ Error deleting rental:', error);
-        throw new Error(`Failed to delete rental: ${error.message}`);
+      if (deleteError) {
+        console.error('❌ DELETE RENTAL FIX: Error deleting rental:', deleteError);
+        throw new Error(`Failed to delete rental: ${deleteError.message}`);
       }
       
-      console.log('✅ Rental deleted successfully');
-      return { success: true, message: 'Rental deleted successfully' };
+      console.log('✅ DELETE RENTAL FIX: Rental deleted successfully');
+      
+      // STEP 3: AUTO-STATUS UPDATE - Revert vehicle status to "available"
+      if (rental.vehicle_id) {
+        try {
+          console.log('🚗 DELETE RENTAL FIX: Reverting vehicle status to "available"...');
+          await this.updateVehicleStatus(rental.vehicle_id, 'available');
+          console.log('✅ DELETE RENTAL FIX: Vehicle status reverted to "available"');
+        } catch (statusError) {
+          console.warn('⚠️ DELETE RENTAL FIX: Failed to update vehicle status (non-critical):', statusError.message);
+          // Don't fail the deletion if status update fails
+        }
+      }
+      
+      return { 
+        success: true, 
+        message: 'Rental deleted successfully and vehicle status reverted to available' 
+      };
       
     } catch (error) {
-      console.error('❌ Error in deleteRental:', error);
+      console.error('❌ DELETE RENTAL FIX: Error in deleteRental:', error);
       throw error;
     }
   }
@@ -1241,16 +1484,23 @@ class TransactionalRentalService {
           customer_phone: '+212600000000',
           accessories: '',
           payment_status: 'pending', // This should be converted to 'unpaid'
-          rental_status: 'scheduled'
+          rental_status: 'scheduled',
+          status: 'invalid_field' // This should be removed
         };
         
         const sanitized = this.sanitizeRentalData(testData);
         
+        // Verify "status" field was removed
+        const statusFieldRemoved = !('status' in sanitized);
+        
         diagnostics.tests.validationSystem = {
-          status: 'PASS',
-          message: `Validation system working. Test results: ${JSON.stringify(sanitized)}`,
+          status: statusFieldRemoved ? 'PASS' : 'FAIL',
+          message: statusFieldRemoved 
+            ? `Validation system working. Status field correctly removed. Test results: ${JSON.stringify(sanitized)}`
+            : 'CRITICAL: Status field was not removed during sanitization!',
           testInput: testData,
-          sanitizedOutput: sanitized
+          sanitizedOutput: sanitized,
+          statusFieldRemoved: statusFieldRemoved
         };
       } catch (error) {
         diagnostics.tests.validationSystem = {

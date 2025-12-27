@@ -174,7 +174,7 @@ const VehicleConditionVideos = ({ rental, onUpdate }) => {
         .from(bucket)
         .upload(uniqueFilename, file, {
           cacheControl: '3600',
-          upsert: true
+          upsert: false
         });
 
       if (uploadError) {

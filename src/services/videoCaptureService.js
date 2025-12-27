@@ -130,7 +130,7 @@ class VideoCaptureService {
         .from(bucketName)
         .upload(filename, videoBlob, {
           cacheControl: '3600',
-          upsert: true,
+          upsert: false,
           contentType: 'video/webm'
         });
 

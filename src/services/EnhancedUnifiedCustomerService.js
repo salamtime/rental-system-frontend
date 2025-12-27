@@ -262,7 +262,7 @@ class EnhancedUnifiedCustomerService {
         .from('id_scans')
         .upload(filePath, imageFile, {
           cacheControl: '3600',
-          upsert: true
+          upsert: false
         });
 
       if (uploadError) {
@@ -867,45 +867,39 @@ class EnhancedUnifiedCustomerService {
    * Fetch rental history for a specific customer.
    */
   static async getCustomerRentalHistory(customerId) {
-    if (!customerId) {
-      console.warn('getCustomerRentalHistory called without a customerId.');
-      return { success: true, data: [] };
-    }
-
     try {
-      // DECOUPLED QUERY: Fetch rentals without joining vehicle data to prevent embed failures.
+      // 1. Fetch rentals with a 'soft' join
       const { data, error } = await supabase
-        .from('app_4c3a7a6153_rentals')
+        .from(`app_4c3a7a6153_rentals`)
         .select(`
-          id,
-          rental_start_date,
-          rental_end_date,
-          rental_status,
-          vehicle_id
-        `) // Select only basic, non-relational fields.
+          *,
+          vehicle:saharax_0u4w4d_vehicles(name, plate_number)
+        `)
         .eq('customer_id', customerId)
-        .order('rental_start_date', { ascending: false });
+        .order('created_at', { ascending: false });
 
-      if (error) {
-        // SILENT FAILURE: Log error but return empty array to prevent UI crash.
-        console.error('Error fetching customer rental history. This is handled gracefully.', error);
-        return { success: true, data: [] }; 
-      }
-      
-      // RESILIENT MAPPING: The UI will receive a consistent structure.
-      const formattedData = data.map(rental => ({
-        ...rental,
-        // The UI should use this fallback if it cannot fetch vehicle details itself.
-        vehicle: { name: 'Vehicle data unavailable' } 
-      }));
+      if (error) throw error;
 
-      return { success: true, data: formattedData };
+      // 2. Data Normalization (The Safety Net)
+      const safeData = data.map(rental => {
+        return {
+          ...rental,
+          // If vehicle join fails, use the text already saved in the rental row
+          display_name: rental.vehicle?.name || rental.vehicle_plate_number || `Vehicle #${rental.vehicle_id}`,
+          // Map the correct money column (total_amount) to a standard property
+          display_amount: rental.total_amount || rental.subtotal_mad || 0,
+          // Ensure status is readable
+          display_status: rental.rental_status || rental.status || 'pending'
+        };
+      });
+
+      return { success: true, data: safeData };
     } catch (err) {
-      // CRITICAL: Catch any unexpected errors and prevent crash.
-      console.error('A critical error occurred in getCustomerRentalHistory:', err);
-      return { success: false, error: err.message, data: [] };
+      console.error('Rental History Error:', err);
+      return { success: false, error: err.message };
     }
   }
+
 }
 
 export default EnhancedUnifiedCustomerService;

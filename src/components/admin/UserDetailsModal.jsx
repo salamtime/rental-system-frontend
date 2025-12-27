@@ -1,9 +1,45 @@
-import React from 'react';
-import { X, Mail, Phone, Calendar, Shield } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Mail, Phone, Calendar, Shield, MessageCircle } from 'lucide-react';
 import OptimizedAvatar from '../common/OptimizedAvatar';
+import { supabase } from '../../services/supabaseClient';
 
 const UserDetailsModal = ({ user, isOpen, onClose }) => {
+  const [userData, setUserData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchUserData = async () => {
+      if (!user?.id) return;
+      
+      setLoading(true);
+      try {
+        const { data, error } = await supabase
+          .from('app_b30c02e74da644baad4668e3587d86b1_users')
+          .select('phone_number, whatsapp_notifications')
+          .eq('id', user.id)
+          .maybeSingle();
+
+        if (error && error.code !== 'PGRST116') {
+          console.error('Error fetching user data:', error);
+        }
+
+        setUserData(data);
+      } catch (err) {
+        console.error('Error loading user data:', err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    if (isOpen && user) {
+      fetchUserData();
+    }
+  }, [isOpen, user]);
+
   if (!isOpen || !user) return null;
+
+  const phoneNumber = userData?.phone_number || user.phone;
+  const whatsappEnabled = userData?.whatsapp_notifications || false;
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -52,10 +88,16 @@ const UserDetailsModal = ({ user, isOpen, onClose }) => {
               <span className="text-sm text-gray-900">{user.email}</span>
             </div>
             
-            {user.phone && (
+            {phoneNumber && (
               <div className="flex items-center">
                 <Phone className="h-4 w-4 text-gray-400 mr-3" />
-                <span className="text-sm text-gray-900">{user.phone}</span>
+                <span className="text-sm text-gray-900">{phoneNumber}</span>
+                {whatsappEnabled && (
+                  <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">
+                    <MessageCircle className="h-3 w-3 mr-1" />
+                    WhatsApp
+                  </span>
+                )}
               </div>
             )}
             
@@ -79,6 +121,19 @@ const UserDetailsModal = ({ user, isOpen, onClose }) => {
             <div className="mt-6 p-4 bg-gray-50 rounded-lg">
               <h4 className="text-sm font-medium text-gray-900 mb-2">Position</h4>
               <p className="text-sm text-gray-600">{user.position}</p>
+            </div>
+          )}
+
+          {/* WhatsApp Notifications Status */}
+          {phoneNumber && (
+            <div className="mt-6 p-4 bg-blue-50 rounded-lg">
+              <h4 className="text-sm font-medium text-gray-900 mb-2">Notifications</h4>
+              <div className="flex items-center">
+                <MessageCircle className={`h-4 w-4 mr-2 ${whatsappEnabled ? 'text-green-600' : 'text-gray-400'}`} />
+                <span className="text-sm text-gray-600">
+                  WhatsApp Alerts: {whatsappEnabled ? 'Enabled' : 'Disabled'}
+                </span>
+              </div>
             </div>
           )}
         </div>

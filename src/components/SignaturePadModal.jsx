@@ -41,7 +41,7 @@ const SignaturePadModal = ({ isOpen, onClose, onSave, rentalId }) => {
         .from('rental-signatures')
         .upload(fileName, blob, {
           cacheControl: '3600',
-          upsert: true,
+          upsert: false,
         });
 
       if (error) {

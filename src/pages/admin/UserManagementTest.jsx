@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../../utils/supabaseClient';
-import { useAuth } from '../../hooks/useAuth';
+import { useAuth } from '../../contexts/AuthContext';
 
 // Minimal test component to isolate the issue
 const UserManagementTest = () => {
@@ -27,7 +27,7 @@ const UserManagementTest = () => {
       if (user) {
         authInfo.push(`User ID: ${user.id}`);
         authInfo.push(`User Email: ${user.email}`);
-        authInfo.push(`User Role: ${user.role || user.user_role || 'No role'}`);
+        authInfo.push(`User Role: ${user.role || 'No role'}`);
         authInfo.push(`User Metadata: ${JSON.stringify(user.user_metadata || {})}`);
       }
       

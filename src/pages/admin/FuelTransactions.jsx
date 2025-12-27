@@ -118,6 +118,21 @@ const FuelTransactions = () => {
     });
   };
 
+  // Determine modal type based on transaction
+  const getModalType = (transaction) => {
+    if (!transaction) return 'vehicle';
+    
+    // Check transaction_type field
+    if (transaction.transaction_type === 'tank_refill') {
+      return 'tank';
+    } else if (transaction.transaction_type === 'vehicle_refill') {
+      return 'vehicle';
+    }
+    
+    // Fallback: check if vehicle_id exists
+    return transaction.vehicle_id ? 'vehicle' : 'tank';
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -214,6 +229,7 @@ const FuelTransactions = () => {
           isOpen={showDetailsModal}
           onClose={handleCloseModal}
           transaction={selectedTransaction}
+          modalType={getModalType(selectedTransaction)}
           onEdit={(transaction) => {
             setShowDetailsModal(false);
             handleAddTransaction(transaction.transaction_type, transaction);

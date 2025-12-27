@@ -32,7 +32,7 @@ export const uploadImage = async (file, vehicleId) => {
       .from(BUCKET_NAME)
       .upload(fileName, file, {
         cacheControl: '3600',
-        upsert: true,
+        upsert: false,
         contentType: file.type
       });
 

@@ -16,8 +16,9 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { MoreHorizontal } from "lucide-react";
+import { MoreHorizontal, Clock } from "lucide-react";
 import { supabase } from "../../lib/supabase";
+import { useAuth } from "../../contexts/AuthContext";
 
 // Helper function to format rental periods
 const formatRentalPeriod = (rental) => {
@@ -51,6 +52,7 @@ export default function RentalList() {
   const [rentals, setRentals] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const { user } = useAuth();
 
   useEffect(() => {
     async function fetchRentals() {
@@ -69,6 +71,8 @@ export default function RentalList() {
             total_amount: total_cost,
             rental_status: status,
             payment_status,
+            approval_status,
+            pending_total_request,
             vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(id, name, plate_number)
           `)
           .order("created_at", { ascending: false });
@@ -84,6 +88,48 @@ export default function RentalList() {
     }
     fetchRentals();
   }, []);
+
+  // Check if current user can delete a rental - ONLY OWNER role
+  const canDelete = () => {
+    if (!user?.id) return false;
+    
+    // CRITICAL: Only allow 'owner' role to delete rentals
+    console.log('🔐 Delete permission check:', {
+      userId: user.id,
+      userRole: user.role,
+      canDelete: user.role === 'owner'
+    });
+    
+    return user.role === 'owner';
+  };
+
+  const handleDelete = async (rentalId) => {
+    // Double-check owner permission before delete
+    if (user?.role !== 'owner') {
+      alert('Only owners can delete rentals.');
+      return;
+    }
+
+    if (!window.confirm('Are you sure you want to delete this rental? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      const { error: deleteError } = await supabase
+        .from('app_4c3a7a6153_rentals')
+        .delete()
+        .eq('id', rentalId);
+
+      if (deleteError) throw deleteError;
+
+      // Remove from local state
+      setRentals(rentals.filter(r => r.id !== rentalId));
+      alert('Rental deleted successfully.');
+    } catch (err) {
+      console.error('Error deleting rental:', err);
+      alert(`Failed to delete rental: ${err.message}`);
+    }
+  };
 
   const getStatusVariant = (status) => {
     switch (status?.toLowerCase()) {
@@ -159,7 +205,18 @@ export default function RentalList() {
                   </Badge>
                 </TableCell>
                 <TableCell className="text-right">
-                  {rental.total_amount?.toFixed(2) || "0.00"} MAD
+                  <div className="flex items-center justify-end gap-2">
+                    <span>{rental.total_amount?.toFixed(2) || "0.00"} MAD</span>
+                    {rental.approval_status === 'pending' && rental.pending_total_request && (
+                      <Badge 
+                        variant="outline" 
+                        className="bg-yellow-50 text-yellow-700 border-yellow-300 text-xs flex items-center gap-1"
+                      >
+                        <Clock className="w-3 h-3" />
+                        Pending
+                      </Badge>
+                    )}
+                  </div>
                 </TableCell>
                 <TableCell className="text-right">
                   <DropdownMenu>
@@ -170,7 +227,14 @@ export default function RentalList() {
                       <DropdownMenuItem>Details</DropdownMenuItem>
                       <DropdownMenuItem>Edit</DropdownMenuItem>
                       <DropdownMenuItem>Close</DropdownMenuItem>
-                      <DropdownMenuItem>Delete</DropdownMenuItem>
+                      {canDelete() && (
+                        <DropdownMenuItem 
+                          className="text-red-600 focus:text-red-600"
+                          onClick={() => handleDelete(rental.id)}
+                        >
+                          Delete
+                        </DropdownMenuItem>
+                      )}
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </TableCell>

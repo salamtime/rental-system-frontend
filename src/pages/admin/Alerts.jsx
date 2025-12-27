@@ -93,12 +93,14 @@ const Alerts = () => {
         fleetAlerts,
         fuelAlerts, 
         maintenanceAlerts,
-        rentalAlerts
+        rentalAlerts,
+        priceApprovalAlerts
       ] = await Promise.all([
         loadFleetAlerts(),
         loadFuelAlerts(),
         loadMaintenanceAlerts(),
-        loadRentalReturnAlerts()
+        loadRentalReturnAlerts(),
+        loadPriceApprovalAlerts()
       ]);
 
       // Combine all alerts
@@ -106,7 +108,8 @@ const Alerts = () => {
         ...fleetAlerts,
         ...fuelAlerts,
         ...maintenanceAlerts,
-        ...rentalAlerts
+        ...rentalAlerts,
+        ...priceApprovalAlerts
       ];
 
       // Sort by priority and creation date
@@ -125,7 +128,8 @@ const Alerts = () => {
         fleet: fleetAlerts.length,
         fuel: fuelAlerts.length,
         maintenance: maintenanceAlerts.length,
-        rental: rentalAlerts.length
+        rental: rentalAlerts.length,
+        priceApproval: priceApprovalAlerts.length
       });
       
     } catch (err) {
@@ -327,7 +331,7 @@ const Alerts = () => {
       console.log(`📊 Found ${rentals?.length || 0} active rentals (not completed, not cancelled)`);
       
       if (rentals && rentals.length > 0) {
-        console.log('\\n📋 Processing rentals for alerts:');
+        console.log('\n📋 Processing rentals for alerts:');
         
         rentals.forEach(rental => {
           const dueDate = new Date(rental.rental_end_date);
@@ -402,6 +406,73 @@ const Alerts = () => {
 
       console.log(`✅ Generated ${rentalAlerts.length} rental return alerts`);
       return rentalAlerts;
+    } catch (error) {
+      console.error('❌ Supabase Error', { message: error.message, details: error.details, hint: error.hint, code: error.code });
+      return [];
+    }
+  };
+
+  const loadPriceApprovalAlerts = async () => {
+    try {
+      console.log('💵 Loading Price Approval alerts...');
+      
+      const priceApprovalAlerts = [];
+      
+      // Query for rentals with pending price approval
+      const { data: pendingRentals, error } = await supabase
+        .from('app_4c3a7a6153_rentals')
+        .select(`
+          id,
+          customer_name,
+          pending_total_request,
+          total_amount,
+          price_override_reason,
+          created_at,
+          vehicle_id,
+          vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(name, model, plate_number)
+        `)
+        .eq('approval_status', 'pending')
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('❌ Supabase Error loading price approvals:', { message: error.message, details: error.details, hint: error.hint, code: error.code });
+        return [];
+      }
+
+      if (pendingRentals && pendingRentals.length > 0) {
+        console.log(`📊 Found ${pendingRentals.length} pending price approval requests`);
+        
+        pendingRentals.forEach(rental => {
+          const makeModel = rental.vehicle?.model || rental.vehicle?.name || 'Vehicle';
+          const plateNumber = rental.vehicle?.plate_number || 'N/A';
+          
+          priceApprovalAlerts.push({
+            id: `price-approval-${rental.id}`,
+            title: 'Price Approval Required',
+            message: `${rental.customer_name} – ${makeModel} (${plateNumber}). Manual: ${formatAmount(rental.pending_total_request)} (Auto: ${formatAmount(rental.total_amount)})`,
+            type: 'warning',
+            priority: 'high',
+            category: 'rental',
+            source: 'price_approval',
+            icon: 'rental',
+            createdAt: rental.created_at || new Date().toISOString(),
+            data: {
+              rentalId: rental.id,
+              customerId: rental.customer_name,
+              vehicleId: rental.vehicle_id,
+              makeModel: makeModel,
+              plateNumber: plateNumber,
+              manualPrice: rental.pending_total_request,
+              autoPrice: rental.total_amount,
+              reason: rental.price_override_reason
+            },
+            onClick: () => navigate(`/admin/rentals/${rental.id}`)
+          });
+        });
+      }
+
+      console.log(`✅ Loaded ${priceApprovalAlerts.length} price approval alerts`);
+      return priceApprovalAlerts;
     } catch (error) {
       console.error('❌ Supabase Error', { message: error.message, details: error.details, hint: error.hint, code: error.code });
       return [];
@@ -571,7 +642,7 @@ const Alerts = () => {
               🚨 Unified Alerts Dashboard
             </h1>
             <p className="text-gray-600">
-              Centralized alerts from Fleet, Fuel, Maintenance, and Rental Management
+              Centralized alerts from Fleet, Fuel, Maintenance, Rental Management, and Price Approvals
             </p>
           </div>
           <button

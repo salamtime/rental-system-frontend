@@ -14,6 +14,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import FuelTransactionService from '../../services/FuelTransactionService';
+import { useAuth } from '../../contexts/AuthContext';
 
 const FuelTransactionsList = ({ 
   filters, 
@@ -29,6 +30,7 @@ const FuelTransactionsList = ({
     totalCount: 0,
     limit: 20
   });
+  const { user } = useAuth();
 
   useEffect(() => {
     loadTransactions();
@@ -61,6 +63,34 @@ const FuelTransactionsList = ({
       setTransactions([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDelete = async (transaction) => {
+    if (!window.confirm('Are you sure you want to delete this transaction? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      const result = await FuelTransactionService.deleteTransaction(
+        transaction.id,
+        transaction.transaction_type,
+        user?.id
+      );
+
+      if (result.success) {
+        // Refresh the transaction list
+        await loadTransactions();
+        
+        // Show success message (you can replace with a toast notification)
+        alert('Transaction deleted successfully');
+      } else {
+        console.error('Error deleting transaction:', result.error);
+        alert(`Failed to delete transaction: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Unexpected error deleting transaction:', error);
+      alert('An unexpected error occurred while deleting the transaction');
     }
   };
 
@@ -155,6 +185,20 @@ const FuelTransactionsList = ({
 
   const handlePageChange = (newPage) => {
     setPagination(prev => ({ ...prev, currentPage: newPage }));
+  };
+
+  // Check if current user can delete a transaction - ONLY OWNER role
+  const canDeleteTransaction = (transaction) => {
+    if (!user?.id) return false;
+    
+    // CRITICAL: Only allow 'owner' role to delete transactions
+    console.log('🔐 Delete permission check:', {
+      userId: user.id,
+      userRole: user.role,
+      canDelete: user.role === 'owner'
+    });
+    
+    return user.role === 'owner';
   };
 
   if (loading) {
@@ -381,6 +425,15 @@ const FuelTransactionsList = ({
                         >
                           <Edit className="w-4 h-4" />
                         </button>
+                        {canDeleteTransaction(transaction) && (
+                          <button
+                            onClick={() => handleDelete(transaction)}
+                            className="text-red-500 hover:text-red-700 p-1 rounded"
+                            title="Delete Transaction (Owner Only)"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

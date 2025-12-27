@@ -13,6 +13,7 @@ import {
   MapPin,
   User
 } from 'lucide-react';
+import { supabase } from '../lib/supabase';
 import FuelRefillModal from './FuelRefillModal';
 import FuelWithdrawalModal from './FuelWithdrawalModal';
 import VehicleRefillModal from './VehicleRefillModal';
@@ -57,6 +58,7 @@ const FuelManagement = () => {
 
   useEffect(() => {
     loadFuelData();
+    loadVehicles();
     checkDatabaseSetup();
   }, []);
 
@@ -72,6 +74,28 @@ const FuelManagement = () => {
     }
   };
 
+  const loadVehicles = async () => {
+    try {
+      console.log('🚗 Loading vehicles from database...');
+      const { data, error } = await supabase
+        .from('saharax_0u4w4d_vehicles')
+        .select('id, name, plate_number, model, vehicle_type')
+        .order('name');
+
+      if (error) {
+        console.error('❌ Error loading vehicles:', error);
+        setVehicles([]);
+        return;
+      }
+
+      console.log('✅ Loaded vehicles:', data);
+      setVehicles(data || []);
+    } catch (error) {
+      console.error('❌ Error loading vehicles:', error);
+      setVehicles([]);
+    }
+  };
+
   const loadFuelData = async () => {
     setLoading(true);
     try {
@@ -79,25 +103,6 @@ const FuelManagement = () => {
       const unifiedData = await FuelTransactionService.getUnifiedFuelData();
       console.log('Loaded unified data:', unifiedData);
       setFuelData(unifiedData);
-      
-      // Extract unique vehicles from refills and withdrawals
-      const vehicleSet = new Set();
-      
-      unifiedData.refills.forEach(refill => {
-        if (refill.saharax_0u4w4d_vehicles) {
-          vehicleSet.add(JSON.stringify(refill.saharax_0u4w4d_vehicles));
-        }
-      });
-      
-      unifiedData.withdrawals.forEach(withdrawal => {
-        if (withdrawal.vehicle) {
-          vehicleSet.add(JSON.stringify(withdrawal.vehicle));
-        }
-      });
-
-      const uniqueVehicles = Array.from(vehicleSet).map(v => JSON.parse(v));
-      console.log('Extracted vehicles:', uniqueVehicles);
-      setVehicles(uniqueVehicles);
       
     } catch (error) {
       console.error('Error loading fuel data:', error);
@@ -107,14 +112,13 @@ const FuelManagement = () => {
           id: 'default',
           name: 'Main Tank',
           capacity: 1000,
-          initial_volume: 500,
+          initial_volume: 0,
           location: 'Main Depot',
           fuel_type: 'gasoline'
         },
         refills: [],
         withdrawals: []
       });
-      setVehicles([]);
     } finally {
       setLoading(false);
     }
@@ -183,6 +187,8 @@ const FuelManagement = () => {
   };
 
   const handleAddTransaction = (type = 'refill', transaction = null) => {
+    console.log('🎯 handleAddTransaction called:', { type, transaction });
+    
     setTransactionType(type);
     setEditTransaction(transaction);
     setShowAddModal(true);
@@ -195,8 +201,10 @@ const FuelManagement = () => {
     setEditTransaction(null);
   };
 
-  const handleTransactionSuccess = () => {
+  const handleTransactionSuccess = (savedTransaction) => {
+    console.log('✅ Transaction saved successfully:', savedTransaction);
     loadFuelData(); // Refresh data after successful transaction
+    handleCloseModal();
   };
 
   const handleViewDetails = (transaction) => {
@@ -219,6 +227,21 @@ const FuelManagement = () => {
       fuelStation: '',
       location: ''
     });
+  };
+
+  // Determine modal type based on transaction
+  const getModalType = (transaction) => {
+    if (!transaction) return 'vehicle';
+    
+    // Check transaction_type field
+    if (transaction.transaction_type === 'tank_refill') {
+      return 'tank';
+    } else if (transaction.transaction_type === 'vehicle_refill') {
+      return 'vehicle';
+    }
+    
+    // Fallback: check if vehicle_id exists
+    return transaction.vehicle_id ? 'vehicle' : 'tank';
   };
 
   // Format currency
@@ -251,6 +274,8 @@ const FuelManagement = () => {
   const safeRefills = getRecentRefills();
   const safeVehicleRefills = getRecentVehicleRefills();
   const safeWithdrawals = getRecentWithdrawals();
+
+  console.log('🔍 RENDER: vehicles count:', vehicles.length);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -705,10 +730,9 @@ const FuelManagement = () => {
         <AddFuelTransactionModal
           isOpen={showAddModal}
           onClose={handleCloseModal}
-          transactionType={transactionType}
           editTransaction={editTransaction}
           vehicles={vehicles}
-          onSuccess={handleTransactionSuccess}
+          onSave={handleTransactionSuccess}
         />
       )}
 
@@ -717,6 +741,7 @@ const FuelManagement = () => {
           isOpen={showDetailsModal}
           onClose={handleCloseModal}
           transaction={selectedTransaction}
+          modalType={getModalType(selectedTransaction)}
           onEdit={(transaction) => {
             setShowDetailsModal(false);
             handleAddTransaction(transaction.transaction_type, transaction);

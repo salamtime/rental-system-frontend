@@ -145,30 +145,58 @@ const EnhancedUnifiedIDScanModal = ({
         
         if (abortController.signal.aborted) return;
         
-        const dataToUse = result.extractedData;
+        const ocrResult = result.extractedData;
         
-        if (dataToUse && setFormData) {
-          setFormData(prev => {
-            const updatedData = {
-              ...prev,
-              customer_id: targetCustomerId,
-              customer_name: dataToUse.full_name || prev.customer_name,
-              customer_phone: dataToUse.phone || prev.customer_phone,
-              customer_email: dataToUse.email || prev.customer_email,
-              linked_display_id: dataToUse.licence_number || dataToUse.id_number || prev.linked_display_id,
-            };
-            return updatedData;
-          });
+        if (ocrResult && setFormData) {
+          // SHIELDING STRATEGY: Extract document number from OCR
+          const documentNumber = ocrResult.document_number || 
+                                ocrResult.id_number || 
+                                ocrResult.licence_number;
           
-          const populatedFields = ['Name', 'Phone', 'Email', 'License Number'].filter(field => {
-              if (field === 'Name') return dataToUse.full_name;
-              if (field === 'Phone') return dataToUse.phone;
-              if (field === 'Email') return dataToUse.email;
-              if (field === 'License Number') return dataToUse.licence_number || dataToUse.id_number;
-              return false;
-          });
+          // CRITICAL FIX: Create the 'Shielded' Data Object
+          // Manual input (formData) is the "Master", OCR is the "Assistant"
+          const shieldedData = {
+            ...formData, // Start with EVERY manual entry currently in the form
+            customer_id: targetCustomerId,
+            
+            // Only fill if the form field is currently empty
+            customer_name: (formData.customer_name?.trim()) ? formData.customer_name : (ocrResult.full_name || ocrResult.customer_name || ''),
+            customer_dob: (formData.customer_dob) ? formData.customer_dob : (ocrResult.date_of_birth || ''),
+            customer_nationality: (formData.customer_nationality?.trim()) ? formData.customer_nationality : (ocrResult.nationality || ''),
+            
+            // THE CRITICAL FIELDS: Absolute protection
+            customer_phone: (formData.customer_phone?.trim()) ? formData.customer_phone : (ocrResult.phone || ''),
+            customer_email: (formData.customer_email?.trim()) ? formData.customer_email : (ocrResult.email || ''),
+            
+            // ID MAPPING: Protect manual input
+            customer_id_number: (formData.customer_id_number?.trim()) ? formData.customer_id_number : (documentNumber || ''),
+            customer_licence_number: (formData.customer_licence_number?.trim()) ? formData.customer_licence_number : (documentNumber || ''),
+            
+            // Additional fields
+            customer_place_of_birth: (formData.customer_place_of_birth?.trim()) ? formData.customer_place_of_birth : (ocrResult.place_of_birth || ''),
+            customer_issue_date: (formData.customer_issue_date) ? formData.customer_issue_date : (ocrResult.issue_date || ''),
+            linked_display_id: (formData.linked_display_id?.trim()) ? formData.linked_display_id : (documentNumber || '')
+          };
           
-          setSuccess(`✅ ID scan processed successfully! Form auto-populated with: ${populatedFields.join(', ')}`);
+          console.log('🛡️ SHIELDING STRATEGY: Shielded data created:', shieldedData);
+          console.log('📞 PROTECTED: customer_phone =', shieldedData.customer_phone);
+          console.log('📧 PROTECTED: customer_email =', shieldedData.customer_email);
+          
+          // Update the UI with shielded data
+          setFormData(shieldedData);
+          
+          // SUCCESS MESSAGE LOGIC
+          const populated = [];
+          if (ocrResult.customer_name || ocrResult.full_name) populated.push('Name');
+          if (documentNumber) populated.push('ID Number');
+          
+          setSuccess(`✅ Form updated! Extracted: ${populated.join(', ')}. Manual fields preserved.`);
+
+          // IMPORTANT: Trigger the completion callback with the shielded data
+          if (onScanComplete) {
+            console.log('🎯 CALLBACK: Sending shielded data to parent:', shieldedData);
+            onScanComplete(shieldedData, selectedImage);
+          }
         } else {
           setSuccess('✅ ID scan processed successfully, but no data was extracted for form population');
         }
@@ -178,7 +206,6 @@ const EnhancedUnifiedIDScanModal = ({
           if (customerResult.success) {
             setSavedCustomer(customerResult.data);
             if (onCustomerSaved) onCustomerSaved(customerResult.data, selectedImage);
-            if (onScanComplete) onScanComplete(customerResult.data, selectedImage);
           } else {
             console.warn('⚠️ Could not fetch updated customer data:', customerResult.error);
           }
@@ -421,7 +448,7 @@ const EnhancedUnifiedIDScanModal = ({
                   <h3 className="text-sm font-medium text-green-800">Success!</h3>
                   <p className="text-sm text-green-700 mt-1">{success}</p>
                   <p className="text-xs text-green-600 mt-1">
-                    Form fields have been automatically populated. You can upload another document or close this modal.
+                    You can upload another document or close this modal.
                   </p>
                 </div>
               </div>
@@ -454,7 +481,7 @@ const EnhancedUnifiedIDScanModal = ({
             <div className="bg-blue-50 border border-blue-200 rounded-md p-4">
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-medium text-blue-900">
-                  Extracted Information (Auto-Populated in Form)
+                  Extracted Information
                 </h3>
                 <button
                   onClick={() => setShowRawData(!showRawData)}
@@ -468,27 +495,27 @@ const EnhancedUnifiedIDScanModal = ({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Full Name</label>
-                  <div className="mt-1 text-sm">{renderFieldValue(extractedData.full_name)}</div>
+                  <div className="mt-1 text-sm">{renderFieldValue(extractedData.customer_name)}</div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Phone Number</label>
-                  <div className="mt-1 text-sm">{renderFieldValue(extractedData.phone)}</div>
+                  <label className="block text-sm font-medium text-gray-700">Phone Number (from scan)</label>
+                  <div className="mt-1 text-sm">{renderFieldValue(extractedData.customer_phone)}</div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Document Number</label>
-                  <div className="mt-1 text-sm">{renderFieldValue(extractedData.licence_number || extractedData.id_number)}</div>
+                  <div className="mt-1 text-sm">{renderFieldValue(extractedData.document_number || extractedData.customer_licence_number || extractedData.customer_id_number)}</div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Date of Birth</label>
-                  <div className="mt-1 text-sm">{renderFieldValue(extractedData.date_of_birth)}</div>
+                  <div className="mt-1 text-sm">{renderFieldValue(extractedData.customer_dob)}</div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-700">Nationality</label>
-                  <div className="mt-1 text-sm">{renderFieldValue(extractedData.nationality)}</div>
+                  <div className="mt-1 text-sm">{renderFieldValue(extractedData.customer_nationality)}</div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700">Email</label>
-                  <div className="mt-1 text-sm">{renderFieldValue(extractedData.email)}</div>
+                  <label className="block text-sm font-medium text-gray-700">Email (from scan)</label>
+                  <div className="mt-1 text-sm">{renderFieldValue(extractedData.customer_email)}</div>
                 </div>
               </div>
 

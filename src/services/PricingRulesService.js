@@ -1,4 +1,4 @@
-import { supabase, ensureAuthenticated, checkAuthStatus } from '../lib/supabase';
+import { supabase } from '../lib/supabase';
 import VehicleModelService from './VehicleModelService';
 
 export class PricingRulesService {
@@ -22,11 +22,8 @@ export class PricingRulesService {
    */
   static async getPricingRules() {
     try {
-      // Check authentication status for debugging
-      await checkAuthStatus();
-      
       const { data, error } = await supabase
-        .from('saharax_0u4w4d_pricing_simple') // FIXED: Changed from pricing_rules to pricing_simple
+        .from('saharax_0u4w4d_pricing_simple')
         .select('*')
         .order('created_at', { ascending: false });
 
@@ -47,23 +44,21 @@ export class PricingRulesService {
    */
   static async upsertPricingRule(ruleData) {
     try {
-      // Ensure user is authenticated before attempting database write
-      console.log('🔐 Checking authentication before upsert...');
-      const authStatus = await checkAuthStatus();
+      // Check if user is authenticated
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
       
-      if (!authStatus.isAuthenticated) {
+      if (authError || !user) {
         throw new Error('Authentication required. Please log in to save pricing rules.');
       }
       
       console.log('✅ User authenticated:', {
-        userId: authStatus.user?.id,
-        email: authStatus.user?.email,
-        hasSession: !!authStatus.session
+        userId: user?.id,
+        email: user?.email
       });
 
       // Only use columns that actually exist in the database schema
       const dbData = {
-        vehicle_model_id: ruleData.vehicle_model_id, // Use UUID field if available
+        vehicle_model_id: ruleData.vehicle_model_id,
         rule_type: ruleData.rule_type || 'base_price',
         duration_type: ruleData.duration_type || 'daily',
         price: ruleData.price || ruleData.daily_rate || ruleData.hourly_rate || null,
@@ -81,17 +76,14 @@ export class PricingRulesService {
       console.log('📝 Attempting to upsert pricing rule:', dbData);
 
       const { data, error } = await supabase
-        .from('saharax_0u4w4d_pricing_simple') // FIXED: Changed from pricing_rules to pricing_simple
+        .from('saharax_0u4w4d_pricing_simple')
         .upsert([dbData])
         .select();
 
       if (error) {
         console.error('❌ Upsert failed:', error);
         
-        // Enhanced error reporting
         if (error.message.includes('permission denied')) {
-          console.error('🚨 Permission denied - checking auth context...');
-          await checkAuthStatus();
           throw new Error(`Permission denied: User authentication may not be properly recognized. Please try logging out and back in. Original error: ${error.message}`);
         }
         
@@ -111,11 +103,15 @@ export class PricingRulesService {
    */
   static async deletePricingRule(ruleId) {
     try {
-      // Ensure user is authenticated before attempting database write
-      await ensureAuthenticated();
+      // Check if user is authenticated
+      const { data: { user }, error: authError } = await supabase.auth.getUser();
+      
+      if (authError || !user) {
+        throw new Error('Authentication required. Please log in to delete pricing rules.');
+      }
 
       const { error } = await supabase
-        .from('saharax_0u4w4d_pricing_simple') // FIXED: Changed from pricing_rules to pricing_simple
+        .from('saharax_0u4w4d_pricing_simple')
         .delete()
         .eq('id', ruleId);
 
@@ -146,7 +142,7 @@ export class PricingRulesService {
 
       // Get pricing rules for this vehicle model using the vehicle_model_id field
       const { data: rules, error } = await supabase
-        .from('saharax_0u4w4d_pricing_simple') // FIXED: Changed from pricing_rules to pricing_simple
+        .from('saharax_0u4w4d_pricing_simple')
         .select('*')
         .eq('vehicle_model_id', vehicleModelId)
         .eq('is_active', true);

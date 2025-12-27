@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { X, Upload, Image as ImageIcon, FileText, Trash2 } from 'lucide-react';
 import FuelTransactionService from '../../services/FuelTransactionService';
 
-const AddFuelTransactionModal = ({ isOpen, onClose, onSave, vehicles = [] }) => {
+const AddFuelTransactionModal = ({ isOpen, onClose, onSave, vehicles = [], editTransaction = null }) => {
   const [formData, setFormData] = useState({
     transaction_date: new Date().toISOString().split('T')[0],
     transaction_type: 'tank_refill',
@@ -21,29 +21,100 @@ const AddFuelTransactionModal = ({ isOpen, onClose, onSave, vehicles = [] }) => 
   const [errors, setErrors] = useState({});
   const [isLoading, setIsLoading] = useState(false);
   const [imagePreview, setImagePreview] = useState(null);
+  const [existingImageInfo, setExistingImageInfo] = useState(null);
   const [dragActive, setDragActive] = useState(false);
 
+  // Populate form when editing
   useEffect(() => {
     if (isOpen) {
-      // Reset form when modal opens
-      setFormData({
-        transaction_date: new Date().toISOString().split('T')[0],
-        transaction_type: 'tank_refill',
-        vehicle_id: '',
-        amount: '',
-        cost: '',
-        fuel_type: 'gasoline',
-        fuel_station: '',
-        location: '',
-        odometer_reading: '',
-        filled_by: '',
-        notes: '',
-        invoice_image: null
-      });
+      if (editTransaction) {
+        console.log('📝 EDIT MODE: Populating form with transaction:', editTransaction);
+        
+        // Extract the real ID from prefixed ID (e.g., "refill-123" -> "123")
+        const realId = editTransaction.id?.replace(/^(refill|withdrawal)-/, '') || editTransaction.id;
+        
+        setFormData({
+          id: realId, // Store the real database ID
+          transaction_date: editTransaction.transaction_date?.split('T')[0] || new Date().toISOString().split('T')[0],
+          transaction_type: editTransaction.transaction_type || 'tank_refill',
+          vehicle_id: editTransaction.vehicle_id || '',
+          amount: editTransaction.amount?.toString() || '',
+          cost: editTransaction.cost?.toString() || '',
+          fuel_type: editTransaction.fuel_type || 'gasoline',
+          fuel_station: editTransaction.fuel_station || '',
+          location: editTransaction.location || '',
+          odometer_reading: editTransaction.odometer_reading?.toString() || '',
+          filled_by: editTransaction.filled_by || editTransaction.created_by || '',
+          notes: editTransaction.notes || '',
+          invoice_image: editTransaction.invoice_image || null // Preserve original image data
+        });
+        
+        // Handle existing invoice image preview
+        if (editTransaction.invoice_image) {
+          console.log('🖼️ Processing existing invoice image:', editTransaction.invoice_image);
+          
+          // Check if it's a base64 image (has 'data' property with base64 string)
+          if (editTransaction.invoice_image.data) {
+            console.log('✅ Base64 image detected, setting preview');
+            setImagePreview(editTransaction.invoice_image.data);
+            setExistingImageInfo({
+              name: editTransaction.invoice_image.name || 'Existing invoice',
+              size: editTransaction.invoice_image.size || null,
+              type: editTransaction.invoice_image.type || 'image'
+            });
+          } 
+          // Check if it's a storage URL (has 'url' property)
+          else if (editTransaction.invoice_image.url) {
+            console.log('✅ Storage URL detected, setting preview');
+            setImagePreview(editTransaction.invoice_image.url);
+            setExistingImageInfo({
+              name: editTransaction.invoice_image.name || 'Existing invoice',
+              size: editTransaction.invoice_image.size || null,
+              type: editTransaction.invoice_image.type || 'storage'
+            });
+          }
+          // Check if it's a PDF
+          else if (editTransaction.invoice_image.type === 'application/pdf') {
+            console.log('✅ PDF detected');
+            setImagePreview('pdf');
+            setExistingImageInfo({
+              name: editTransaction.invoice_image.name || 'Existing invoice.pdf',
+              size: editTransaction.invoice_image.size || null,
+              type: 'application/pdf'
+            });
+          }
+          else {
+            console.log('⚠️ Unknown invoice image format');
+            setImagePreview(null);
+            setExistingImageInfo(null);
+          }
+        } else {
+          setImagePreview(null);
+          setExistingImageInfo(null);
+        }
+      } else {
+        console.log('➕ ADD MODE: Resetting form');
+        // Reset form for new transaction
+        setFormData({
+          transaction_date: new Date().toISOString().split('T')[0],
+          transaction_type: 'tank_refill',
+          vehicle_id: '',
+          amount: '',
+          cost: '',
+          fuel_type: 'gasoline',
+          fuel_station: '',
+          location: '',
+          odometer_reading: '',
+          filled_by: '',
+          notes: '',
+          invoice_image: null
+        });
+        setImagePreview(null);
+        setExistingImageInfo(null);
+      }
       setErrors({});
-      setImagePreview(null);
     }
-  }, [isOpen]);
+  }, [isOpen, editTransaction]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -112,6 +183,9 @@ const AddFuelTransactionModal = ({ isOpen, onClose, onSave, vehicles = [] }) => 
       invoice_image: file
     }));
 
+    // Clear existing image info when uploading new file
+    setExistingImageInfo(null);
+
     // Clear error
     setErrors(prev => ({
       ...prev,
@@ -156,6 +230,7 @@ const AddFuelTransactionModal = ({ isOpen, onClose, onSave, vehicles = [] }) => 
       invoice_image: null
     }));
     setImagePreview(null);
+    setExistingImageInfo(null);
   };
 
   const validateForm = () => {
@@ -199,19 +274,32 @@ const AddFuelTransactionModal = ({ isOpen, onClose, onSave, vehicles = [] }) => 
     setIsLoading(true);
 
     try {
-      // Convert image to base64 for storage
+      // Handle invoice image data
       let imageData = null;
+      
       if (formData.invoice_image) {
-        const reader = new FileReader();
-        imageData = await new Promise((resolve) => {
-          reader.onload = (e) => resolve({
-            data: e.target.result,
-            name: formData.invoice_image.name,
-            type: formData.invoice_image.type,
-            size: formData.invoice_image.size
+        // Check if it's a File object (new upload) or existing data
+        if (formData.invoice_image instanceof File) {
+          console.log('📤 New image file uploaded, converting to base64...');
+          // New file uploaded - convert to base64
+          const reader = new FileReader();
+          imageData = await new Promise((resolve) => {
+            reader.onload = (e) => resolve({
+              data: e.target.result,
+              name: formData.invoice_image.name,
+              type: formData.invoice_image.type,
+              size: formData.invoice_image.size
+            });
+            reader.readAsDataURL(formData.invoice_image);
           });
-          reader.readAsDataURL(formData.invoice_image);
-        });
+          console.log('✅ Image converted to base64');
+        } else {
+          // Existing image data - preserve it
+          console.log('💾 Preserving existing image data');
+          imageData = formData.invoice_image;
+        }
+      } else {
+        console.log('🗑️ No image data (will be set to null)');
       }
 
       const transactionData = {
@@ -219,16 +307,31 @@ const AddFuelTransactionModal = ({ isOpen, onClose, onSave, vehicles = [] }) => 
         invoice_image: imageData
       };
 
-      const result = await FuelTransactionService.createTransaction(transactionData);
+      let result;
+      const isEditMode = !!editTransaction;
+
+      if (isEditMode) {
+        // Update existing transaction
+        console.log('🔄 Updating transaction:', formData.id, 'with image:', imageData ? 'YES' : 'NO');
+        result = await FuelTransactionService.updateTransaction(formData.id, transactionData);
+      } else {
+        // Create new transaction
+        console.log('➕ Creating new transaction with image:', imageData ? 'YES' : 'NO');
+        result = await FuelTransactionService.createTransaction(transactionData);
+      }
       
       if (result.success) {
-        onSave(result.transaction);
+        console.log('✅ Transaction saved successfully:', result.transaction);
+        // Call onSave callback if provided
+        if (onSave && typeof onSave === 'function') {
+          onSave(result.transaction);
+        }
         onClose();
       } else {
-        setErrors({ submit: result.error || 'Failed to create transaction' });
+        setErrors({ submit: result.error || `Failed to ${isEditMode ? 'update' : 'create'} transaction` });
       }
     } catch (error) {
-      console.error('Error creating transaction:', error);
+      console.error('Error saving transaction:', error);
       setErrors({ submit: 'An unexpected error occurred' });
     } finally {
       setIsLoading(false);
@@ -240,12 +343,33 @@ const AddFuelTransactionModal = ({ isOpen, onClose, onSave, vehicles = [] }) => 
   const unitPrice = formData.amount && formData.cost ? 
     (parseFloat(formData.cost) / parseFloat(formData.amount)).toFixed(2) : '0.00';
 
+  const isEditMode = !!editTransaction;
+  const modalTitle = isEditMode ? 'Edit' : 'Add';
+
+  // Safe vehicles array
+  const safeVehicles = Array.isArray(vehicles) ? vehicles : [];
+
+  // Determine if we should show the image preview section
+  const hasImageToShow = formData.invoice_image || imagePreview;
+
+  // Log for debugging
+  console.log('🔍 MODAL: Render', {
+    isEditMode,
+    editTransaction: editTransaction?.id,
+    formData: formData,
+    imagePreview: imagePreview ? (imagePreview === 'pdf' ? 'PDF' : 'Image') : null,
+    existingImageInfo,
+    hasInvoiceImage: !!formData.invoice_image,
+    invoiceImageType: formData.invoice_image instanceof File ? 'File' : (formData.invoice_image ? 'Data' : 'null'),
+    vehiclesCount: safeVehicles.length
+  });
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-6 border-b">
           <h2 className="text-xl font-semibold text-gray-900">
-            Add {formData.transaction_type === 'tank_refill' ? 'Tank Refill' : 
+            {modalTitle} {formData.transaction_type === 'tank_refill' ? 'Tank Refill' : 
                  formData.transaction_type === 'vehicle_refill' ? 'Vehicle Refill' : 'Withdrawal'}
           </h2>
           <button
@@ -296,6 +420,7 @@ const AddFuelTransactionModal = ({ isOpen, onClose, onSave, vehicles = [] }) => 
                 errors.transaction_type ? 'border-red-300' : 'border-gray-300'
               }`}
               required
+              disabled={isEditMode} // Disable changing type when editing
             >
               <option value="tank_refill">Tank Refill</option>
               <option value="vehicle_refill">Vehicle Refill</option>
@@ -322,7 +447,7 @@ const AddFuelTransactionModal = ({ isOpen, onClose, onSave, vehicles = [] }) => 
                 required
               >
                 <option value="">Select a vehicle</option>
-                {vehicles.map((vehicle) => (
+                {safeVehicles.map((vehicle) => (
                   <option key={vehicle.id} value={vehicle.id}>
                     {vehicle.name} ({vehicle.plate_number})
                   </option>
@@ -330,6 +455,9 @@ const AddFuelTransactionModal = ({ isOpen, onClose, onSave, vehicles = [] }) => 
               </select>
               {errors.vehicle_id && (
                 <p className="text-red-500 text-sm mt-1">{errors.vehicle_id}</p>
+              )}
+              {safeVehicles.length === 0 && (
+                <p className="text-yellow-600 text-sm mt-1">⚠️ No vehicles available. Please add vehicles first.</p>
               )}
             </div>
           )}
@@ -454,7 +582,7 @@ const AddFuelTransactionModal = ({ isOpen, onClose, onSave, vehicles = [] }) => 
                 Invoice Image
               </label>
               
-              {!formData.invoice_image ? (
+              {!hasImageToShow ? (
                 <div
                   className={`relative border-2 border-dashed rounded-lg p-6 text-center transition-colors ${
                     dragActive 
@@ -499,17 +627,20 @@ const AddFuelTransactionModal = ({ isOpen, onClose, onSave, vehicles = [] }) => 
                       )}
                       <div>
                         <p className="text-sm font-medium text-gray-900">
-                          {formData.invoice_image.name}
+                          {formData.invoice_image?.name || existingImageInfo?.name || 'Existing invoice'}
                         </p>
-                        <p className="text-xs text-gray-500">
-                          {(formData.invoice_image.size / 1024 / 1024).toFixed(2)} MB
-                        </p>
+                        {(formData.invoice_image?.size || existingImageInfo?.size) && (
+                          <p className="text-xs text-gray-500">
+                            {((formData.invoice_image?.size || existingImageInfo?.size) / 1024 / 1024).toFixed(2)} MB
+                          </p>
+                        )}
                       </div>
                     </div>
                     <button
                       type="button"
                       onClick={removeImage}
                       className="text-red-500 hover:text-red-700 transition-colors"
+                      title="Remove image"
                     >
                       <Trash2 className="h-5 w-5" />
                     </button>
@@ -578,7 +709,7 @@ const AddFuelTransactionModal = ({ isOpen, onClose, onSave, vehicles = [] }) => 
               className="flex-1 px-4 py-2 bg-blue-600 text-white hover:bg-blue-700 rounded-md transition-colors disabled:opacity-50"
               disabled={isLoading}
             >
-              {isLoading ? 'Saving...' : `Save ${formData.transaction_type === 'withdrawal' ? 'Withdrawal' : 'Refill'}`}
+              {isLoading ? 'Saving...' : `${isEditMode ? 'Update' : 'Save'} ${formData.transaction_type === 'withdrawal' ? 'Withdrawal' : 'Refill'}`}
             </button>
           </div>
         </form>

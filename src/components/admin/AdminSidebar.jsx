@@ -7,7 +7,7 @@ import {
   TruckIcon, DropletIcon, SettingsIcon, LogOutIcon,
   MenuIcon, CompassIcon, Loader2, DollarSignIcon
 } from 'lucide-react';
-import { useAuth } from '../../hooks/useAuth';
+import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../utils/supabaseClient';
 import AlertNotificationBadge from './AlertNotificationBadge';
 import MobileDrawer from '../navigation/MobileDrawer';
@@ -61,10 +61,10 @@ const AdminSidebar = () => {
         console.log('=== 🔍 [AdminSidebar] Fetching user permissions via RPC ===');
         console.log('📋 User ID:', user.id);
         console.log('📋 User Email:', user.email);
-        console.log('📋 User Role:', user.user_metadata?.role);
+        console.log('📋 User Role:', user.role);
         
         // OWNER MASTER KEY: If user is owner, grant all permissions automatically
-        if (user.user_metadata?.role === 'owner') {
+        if (user.role === 'owner') {
           console.log('🔑 OWNER MASTER KEY ACTIVATED - Granting all permissions');
           const ownerPermissions = {};
           STANDARD_MODULES.forEach(module => {
@@ -140,14 +140,14 @@ const AdminSidebar = () => {
     };
 
     fetchUserPermissions();
-  }, [user?.id, user?.email, user?.user_metadata?.role]);
+  }, [user?.id, user?.email, user?.role]);
 
   // Real-time Updates: Listen for permission changes
   useEffect(() => {
     if (!user?.id) return;
     
     // Skip real-time updates for owner - they always have full access
-    if (user.user_metadata?.role === 'owner') {
+    if (user.role === 'owner') {
       console.log('👑 Owner user - skipping real-time permission updates');
       return;
     }
@@ -191,7 +191,7 @@ const AdminSidebar = () => {
       console.log('🧹 Cleaning up real-time subscription');
       supabase.removeChannel(channel);
     };
-  }, [user?.id, user?.user_metadata?.role]);
+  }, [user?.id, user?.role]);
   
   // Check if user has access to a specific module with case-insensitive comparison
   const hasModuleAccess = useCallback((moduleName) => {
@@ -201,7 +201,7 @@ const AdminSidebar = () => {
     console.log('📊 Total keys in userPermissions:', Object.keys(userPermissions).length);
     
     // OWNER MASTER KEY: Owners always have access
-    if (user?.user_metadata?.role === 'owner') {
+    if (user?.role === 'owner') {
       console.log(`  ✅ Owner access granted for: "${moduleName}"`);
       return true;
     }
@@ -230,7 +230,7 @@ const AdminSidebar = () => {
     
     console.log(`  ❌ Access DENIED for: "${moduleName}" (no matching key found)`);
     return false;
-  }, [userPermissions, user?.user_metadata?.role]);
+  }, [userPermissions, user?.role]);
 
   // Define navigation items with standardized module names
   const getAllNavigationItems = () => {

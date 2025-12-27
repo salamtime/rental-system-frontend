@@ -7,6 +7,7 @@
  * BUG FIX: Added robust data sanitization to prevent db errors on empty time/date values.
  * BUG FIX: Stricter validation for excludeRentalId.
  * REGRESSION FIX: Added explicit sanitization for time fields to prevent "invalid input syntax for type time"
+ * DATA-LOSS FIX V2: Rewrote sanitizer to explicitly prevent customer_id from numeric conversion.
  */
 
 import { supabase } from '../lib/supabase';
@@ -40,7 +41,7 @@ class EnhancedTransactionalRentalService {
    */
   validateCustomerId(customerId) {
     if (!customerId) return false;
-    const isValidFormat = customerId.startsWith('cust_');
+    const isValidFormat = typeof customerId === 'string' && customerId.startsWith('cust_');
     if (!isValidFormat) {
       console.error('❌ INVALID CUSTOMER ID FORMAT:', customerId);
     }
@@ -61,45 +62,83 @@ class EnhancedTransactionalRentalService {
   }
 
   /**
-   * BUG FIX: Centralized, robust data sanitization before DB operations.
-   * REGRESSION FIX: Added explicit nullification for time fields.
+   * BUG FIX & DATA-LOSS FIX V2: Centralized, robust data sanitization.
+   * This version explicitly separates customer_id from numeric conversion.
    */
   _sanitizeDataForDB(data) {
+    console.log('🛡️ [Sanitizer V2] Starting data sanitization...');
+    const numericFields = [
+      'vehicle_id', 'total_amount', 'unit_price', 'transport_fee',
+      'deposit_amount', 'damage_deposit', 'remaining_amount', 'quantity_days'
+    ];
+    const stringFieldsToPreserve = ['customer_email', 'customer_phone'];
     const sanitized = {};
 
-    // General sanitization for all fields
     for (const key in data) {
-      const value = data[key];
-      // Convert empty strings, undefined, or explicit "null" strings to null
+      let value = data[key];
+      // console.log(`🛡️ [Sanitizer V2] Processing key: "${key}", value: "${value}"`);
+
+      // 1. Universal cleanup for empty/nullish values
       if (value === '' || value === undefined || value === 'null') {
-        sanitized[key] = null;
-      } else {
+        value = null;
+        // console.log(`🛡️ [Sanitizer V2] Key "${key}" nulled due to empty value.`);
+      }
+
+      // 2. CRITICAL: Handle customer_id as a string, NEVER a number.
+      if (key === 'customer_id') {
+        if (this.validateCustomerId(value)) {
+          sanitized[key] = value;
+          console.log(`✅ [Sanitizer V2] Preserved string customer_id: "${value}"`);
+        } else {
+          sanitized[key] = null;
+          console.warn(`⚠️ [Sanitizer V2] Invalid customer_id "${value}" was nulled.`);
+        }
+      } 
+      // 3. Handle defined numeric fields
+      else if (numericFields.includes(key)) {
+        const numValue = Number(value);
+        if (Number.isFinite(numValue)) {
+          sanitized[key] = numValue;
+          // console.log(`🔢 [Sanitizer V2] Converted key "${key}" to number: ${numValue}`);
+        } else {
+          sanitized[key] = null;
+          if (value !== null) {
+            console.warn(`⚠️ [Sanitizer V2] Invalid numeric value for "${key}": "${value}". Coerced to null.`);
+          }
+        }
+      } 
+      // 4. Preserve specific string fields
+      else if (stringFieldsToPreserve.includes(key)) {
+        if (value !== null) {
+          sanitized[key] = String(value);
+          // console.log(`🔤 [Sanitizer V2] Preserved string for key "${key}": "${value}"`);
+        } else {
+          sanitized[key] = null;
+        }
+      } 
+      // 5. Handle all other fields
+      else {
         sanitized[key] = value;
       }
     }
 
-    // REGRESSION FIX: Explicitly nullify empty time fields to prevent db errors
+    // Keep the existing specific sanitizers for other field types (dates, times, etc.)
     const timeFields = ['rental_start_time', 'rental_end_time'];
     timeFields.forEach(field => {
       if (sanitized.hasOwnProperty(field) && sanitized[field] === '') {
-        console.warn(`⚠️ REGRESSION FIX: Empty string for time field ${field}. Forcing to null.`);
         sanitized[field] = null;
       }
     });
 
-    // Explicitly nullify invalid date fields
     const dateFields = ['start_date', 'end_date', 'rental_start_date', 'rental_end_date', 'started_at', 'completed_at'];
     dateFields.forEach(field => {
       if (sanitized.hasOwnProperty(field) && sanitized[field]) {
-        // Check if it's a valid date string before creating a Date object
         if (typeof sanitized[field] === 'string' && isNaN(new Date(sanitized[field]).getTime())) {
-          console.warn(`⚠️ Invalid date for ${field}: "${sanitized[field]}". Setting to null.`);
           sanitized[field] = null;
         }
       }
     });
 
-    // Map payment status to correct DB values
     const paymentMap = {
       'partial': 'Partially Paid',
       'paid': 'Paid in Full',
@@ -113,7 +152,7 @@ class EnhancedTransactionalRentalService {
       sanitized.payment_status = 'Pending';
     }
     
-    console.log('🧼 FINAL SANITIZED DATA being sent to DB:', JSON.stringify(sanitized, null, 2));
+    console.log('🧼 [Sanitizer V2] FINAL SANITIZED DATA:', JSON.stringify(sanitized, null, 2));
     return sanitized;
   }
 
@@ -191,11 +230,8 @@ class EnhancedTransactionalRentalService {
     }
   }
 
-  /**
-   * CRITICAL FIX: Enhanced rental creation with GUARANTEED customer ID and payment status enforcement
-   */
   async createRental(rentalData) {
-    console.log('🆕 CREATING RENTAL with GUARANTEED customer ID and payment status enforcement...');
+    console.log('🆕 INITIATING TWO-STEP RENTAL CREATION...');
     try {
       const sanitizedData = this.sanitizeRentalData(rentalData);
       
@@ -213,6 +249,38 @@ class EnhancedTransactionalRentalService {
         throw new Error(`Customer ${sanitizedData.customer_id} does not exist. Cannot create rental.`);
       }
 
+      // STEP 1 of 2: Null-safe update of customer details before rental creation.
+      const customerUpdatePayload = {};
+      const customerFieldsToUpdate = {
+        customer_name: 'name',
+        email: 'email',
+        phone: 'phone',
+        address: 'address'
+      };
+
+      Object.entries(customerFieldsToUpdate).forEach(([formKey, dbKey]) => {
+        const value = sanitizedData[formKey];
+        if (value !== null && value !== undefined && String(value).trim() !== '') {
+          customerUpdatePayload[dbKey] = value;
+        }
+      });
+
+      if (Object.keys(customerUpdatePayload).length > 0) {
+        console.log('🔄 STEP 1/2: Updating customer...', customerUpdatePayload);
+        const { error: customerUpdateError } = await supabase
+          .from(this.customersTableName)
+          .update(customerUpdatePayload)
+          .eq('id', sanitizedData.customer_id);
+
+        if (customerUpdateError) {
+          console.error('❌ FAILED to update customer during two-step save:', customerUpdateError);
+          throw new Error(`Failed to update customer: ${customerUpdateError.message}`);
+        }
+        console.log('✅ Customer updated successfully.');
+      }
+
+      // STEP 2 of 2: Create the rental record.
+      console.log('🔄 STEP 2/2: Creating rental record...');
       const availability = await this.checkVehicleAvailability(
         sanitizedData.vehicle_id,
         sanitizedData.start_date,
@@ -245,7 +313,7 @@ class EnhancedTransactionalRentalService {
         throw new Error('CRITICAL ERROR: Customer ID was not saved to rental record!');
       }
 
-      console.log('✅ RENTAL CREATED SUCCESSFULLY:', newRental.id);
+      console.log('✅ RENTAL CREATED SUCCESSFULLY (TWO-STEP COMPLETE):', newRental.id);
       return { success: true, data: newRental, message: 'Rental created successfully' };
 
     } catch (error) {

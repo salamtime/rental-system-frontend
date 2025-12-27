@@ -47,7 +47,7 @@ export const apiService = {
 
   // Rental operations
   async getRentals() {
-    const { data, error } = await supabase.from('rentals').select('*');
+    const { data, error } = await supabase.from('rentals').select('*, customers(customer_email, customer_phone)');
     if (error) throw error;
     return data;
   },

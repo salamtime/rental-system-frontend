@@ -1,6 +1,6 @@
 import React from 'react';
 import { useSelector } from 'react-redux';
-import { useAuth } from '../../hooks/useAuth';
+import { useAuth } from '../../contexts/AuthContext';
 
 const StateDebugger = () => {
   const { user, userRoles, isAuthenticated } = useSelector(state => state.auth);
@@ -16,7 +16,7 @@ const StateDebugger = () => {
       <div className="space-y-1">
         <div>Redux Auth: {isAuthenticated ? '✅' : '❌'}</div>
         <div>User Email: {auth.user?.email || 'none'}</div>
-        <div>User Role: {auth.userRole || 'none'}</div>
+        <div>User Role: {auth.user?.role || 'none'}</div>
         <div>Metadata Role: {auth.user?.user_metadata?.role || 'none'}</div>
       </div>
     </div>

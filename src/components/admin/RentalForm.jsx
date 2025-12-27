@@ -4,7 +4,7 @@ import { selectVehicles } from '../../store/slices/vehiclesSlice';
 import { User, Calendar, Car, MapPin, CreditCard, FileText, UserSearch } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 
-const RentalForm = ({ onSubmit, initialData = null, isLoading = false }) => {
+const RentalForm = ({ onSubmit, initialData = null, isLoading = false, scannedCustomerData = null }) => {
   // Form state
   const [formData, setFormData] = useState({
     customer_name: '',
@@ -242,7 +242,58 @@ const RentalForm = ({ onSubmit, initialData = null, isLoading = false }) => {
   const handleSubmit = (e) => {
     e.preventDefault();
     if (validateForm()) {
-      onSubmit(formData);
+      console.log("🔄 [RentalForm] Submitting form with FORM STATE > OCR DATA priority...");
+      console.log("📄 [RentalForm] Scanned Data:", scannedCustomerData);
+      console.log("📝 [RentalForm] Current Form Data:", formData);
+
+      // FORM STATE > OCR DATA: Merge strategy with existing form state taking absolute priority
+      let finalPayload = { ...formData };
+
+      if (scannedCustomerData) {
+        // Extract document number with fallback logic
+        const documentNumber = scannedCustomerData.document_number || 
+                              scannedCustomerData.customer_licence_number || 
+                              scannedCustomerData.customer_id_number;
+        
+        // CRITICAL FIX: Form State > OCR Data for all fields
+        const finalMappedData = {
+          ...formData, // 1. Keep what is already in the form (HIGHEST PRIORITY)
+          
+          // 2. Only populate from OCR if form field is empty
+          customer_name: formData.customer_name || scannedCustomerData.full_name || scannedCustomerData.customer_name || '',
+          customer_dob: formData.customer_dob || scannedCustomerData.date_of_birth || scannedCustomerData.customer_dob || '',
+          customer_nationality: formData.customer_nationality || scannedCustomerData.nationality || scannedCustomerData.customer_nationality || '',
+          
+          // 3. THE FIX: Only update phone/email if they are currently empty AND OCR has a value
+          customer_phone: formData.customer_phone || scannedCustomerData.phone || scannedCustomerData.customer_phone || '',
+          customer_email: formData.customer_email || scannedCustomerData.email || scannedCustomerData.customer_email || '',
+          
+          // 4. Document ID fallback fix - map to BOTH fields
+          customer_id_number: formData.customer_id_number || documentNumber || scannedCustomerData.id_number || '',
+          customer_licence_number: formData.customer_licence_number || documentNumber || scannedCustomerData.licence_number || ''
+        };
+        
+        console.log('🛡️ [RentalForm] Form State > OCR Data merge completed:', {
+          preservedPhone: formData.customer_phone,
+          ocrPhone: scannedCustomerData.phone || scannedCustomerData.customer_phone,
+          finalPhone: finalMappedData.customer_phone,
+          preservedEmail: formData.customer_email,
+          ocrEmail: scannedCustomerData.email || scannedCustomerData.customer_email,
+          finalEmail: finalMappedData.customer_email,
+          mappedIdNumber: documentNumber,
+          mappedLicenceNumber: documentNumber
+        });
+        
+        finalPayload = finalMappedData;
+      }
+      
+      // Clean the final payload to remove null/undefined values
+      const cleanPayload = Object.fromEntries(
+        Object.entries(finalPayload).filter(([_, v]) => v != null)
+      );
+      
+      console.log("✅ [RentalForm] Final payload with Form State priority:", cleanPayload);
+      onSubmit(cleanPayload);
     }
   };
 

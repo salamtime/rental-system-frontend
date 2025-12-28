@@ -7,7 +7,7 @@ import VideoContractModal from '../../components/VideoContractModal';
 import VehicleAvailabilityService from '../../services/VehicleAvailabilityService';
 import ViewCustomerDetailsDrawer from '../../components/admin/ViewCustomerDetailsDrawer';
 import { getPaymentStatusStyle } from '../../config/statusColors';
-import { Sparkles, Clock } from 'lucide-react';
+import { Plus, Clock } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 
 const Rentals = () => {
@@ -517,7 +517,11 @@ const Rentals = () => {
     return (
       <div className="min-h-screen bg-gray-50 py-8">
         <EnhancedStepperRentalForm
-          onSubmit={handleRentalSuccess}
+          onSuccess={handleRentalSuccess}
+          onCancel={() => {
+            setShowStepperForm(false);
+            setEditingRental(null);
+          }}
           initialData={editingRental}
           isLoading={loading}
         />
@@ -536,23 +540,27 @@ const Rentals = () => {
                 
               </p>
             </div>
-            <div className="mt-4 sm:mt-0 flex flex-col sm:flex-row gap-3">
-              <button
-                onClick={() => setShowForm(true)}
-                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
-              >
-                Add New Rental
-              </button>
-              <button
-                onClick={() => setShowStepperForm(true)}
-                className="flex items-center justify-center gap-2 px-6 py-3 bg-white text-blue-600 border-2 border-blue-600 rounded-lg hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
-              >
-                <Sparkles className="w-5 h-5" />
-                <span>Create New Rental (Light Version)</span>
-              </button>
-            </div>
+            
+            {/* Desktop Button */}
+            <button
+              onClick={() => setShowStepperForm(true)}
+              className="hidden sm:flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors shadow-md hover:shadow-lg font-medium"
+            >
+              <Plus className="w-5 h-5" />
+              <span>Create New Rental</span>
+            </button>
           </div>
         </div>
+
+        {/* Mobile Floating Action Button */}
+        <button
+          onClick={() => setShowStepperForm(true)}
+          className="sm:hidden fixed bottom-6 right-6 z-50 flex items-center gap-2 px-5 py-4 bg-blue-600 text-white rounded-full hover:bg-blue-700 active:bg-blue-800 transition-all shadow-lg hover:shadow-xl font-medium"
+          aria-label="Create New Rental"
+        >
+          <Plus className="w-6 h-6" />
+          <span className="text-sm font-semibold">Create New Rental</span>
+        </button>
 
         {availabilityData.length > 0 && (
           <div className="mb-8 p-6 bg-white rounded-lg shadow-sm border">
@@ -623,21 +631,12 @@ const Rentals = () => {
               <p className="text-gray-600 mb-4">
                 {rentals.length === 0 ? 'No rentals found' : 'No rentals match your filters'}
               </p>
-              <div className="flex flex-col sm:flex-row gap-3 justify-center">
-                <button
-                  onClick={() => setShowForm(true)}
-                  className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                >
-                  Create First Rental
-                </button>
-                <button
-                  onClick={() => setShowStepperForm(true)}
-                  className="flex items-center justify-center gap-2 px-6 py-3 bg-white text-blue-600 border-2 border-blue-600 rounded-lg hover:bg-blue-50"
-                >
-                  <Sparkles className="w-5 h-5" />
-                  <span>Try Light Version</span>
-                </button>
-              </div>
+              <button
+                onClick={() => setShowStepperForm(true)}
+                className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                Create First Rental
+              </button>
             </div>
           ) : (
             <div className="overflow-x-auto">

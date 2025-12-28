@@ -26,6 +26,7 @@ import { supabase } from '../lib/supabase.js';
  * - START RENTAL FIX: Allow starting rentals when vehicle is "scheduled" for that specific rental
  * - DELETE RENTAL FIX: Automatically revert vehicle status to "available" when rental is deleted
  * - CRITICAL STATUS FIELD FIX: Removed all "status" field references to prevent database column errors
+ * - CRITICAL BOOKING FIX: Vehicle status check is now informational only - allows multiple bookings as long as dates don't overlap
  */
 class TransactionalRentalService {
   
@@ -762,7 +763,7 @@ class TransactionalRentalService {
         
         if (!availabilityResult.isAvailable) {
           console.log('❌ FIXED: Final availability check failed:', availabilityResult);
-          throw new Error(`Vehicle is not available: ${availabilityResult.reason}`);
+          throw new Error(`Vehicle availability check failed: ${availabilityResult.reason}`);
         }
         
         console.log('✅ FIXED: Final availability check passed');
@@ -1042,7 +1043,7 @@ class TransactionalRentalService {
   
   /**
    * AVAILABILITY LOGIC FIX: Check vehicle availability with strict conflict detection
-   * ENHANCED: Now checks vehicle status BEFORE checking rental overlaps
+   * CRITICAL BOOKING FIX: Vehicle status check is now informational only - allows multiple bookings as long as dates don't overlap
    * CRITICAL: Returns immediately when conflicts are found - no next available date calculation
    * START RENTAL FIX: Allow checking availability for a specific rental (bypass status check)
    */
@@ -1059,10 +1060,10 @@ class TransactionalRentalService {
     });
     
     try {
-      // STEP 1: VEHICLE STATUS CHECK - Check vehicle status BEFORE checking rental overlaps
+      // STEP 1: VEHICLE STATUS CHECK - Now informational only, does NOT block booking
       // EXCEPTION: Skip status check if forRentalId is provided (starting an existing rental)
       if (!forRentalId) {
-        console.log('🚗 VEHICLE STATUS CHECK: Verifying vehicle status...');
+        console.log('🚗 VEHICLE STATUS CHECK: Verifying vehicle exists (informational only)...');
         const { data: vehicle, error: vehicleError } = await supabase
           .from('saharax_0u4w4d_vehicles')
           .select('id, name, status')
@@ -1088,20 +1089,11 @@ class TransactionalRentalService {
         }
         
         const vehicleStatus = (vehicle.status || '').toLowerCase();
-        console.log('🚗 VEHICLE STATUS CHECK: Vehicle status:', vehicleStatus);
+        console.log('🚗 VEHICLE STATUS CHECK: Vehicle status (informational):', vehicleStatus);
         
-        // CRITICAL: Only 'available' status vehicles can be booked
-        if (vehicleStatus !== 'available') {
-          console.log(`❌ VEHICLE STATUS CHECK: Vehicle is not available - Status: ${vehicle.status}`);
-          return {
-            isAvailable: false,
-            reason: `Vehicle "${vehicle.name}" is currently ${vehicle.status}. Only vehicles with "Available" status can be booked.`,
-            vehicleStatus: vehicle.status,
-            message: 'Vehicle status prevents booking'
-          };
-        }
-        
-        console.log('✅ VEHICLE STATUS CHECK: Vehicle status is "available", proceeding to check rental overlaps...');
+        // CRITICAL BOOKING FIX: Status check is now informational only
+        // We only check for rental date conflicts, not vehicle status
+        console.log('✅ VEHICLE STATUS CHECK: Vehicle found, proceeding to check rental conflicts (status check is informational only)...');
       } else {
         console.log('🚗 START RENTAL FIX: Skipping vehicle status check - starting existing rental:', forRentalId);
         

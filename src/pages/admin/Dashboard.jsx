@@ -159,115 +159,115 @@ const AdminDashboard = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  useEffect(() => {
-    const fetchData = async () => {
-      setLoading(true);
-      try {
-        // --- Fetch overview stats ---
-        const { count: vehiclesCount, error: vError } = await supabase.from('saharax_0u4w4d_vehicles').select('*', { count: 'exact', head: true });
-        const { count: rentalsCount, error: rError } = await supabase.from('app_4c3a7a6153_rentals').select('*', { count: 'exact', head: true }).eq('rental_status', 'active');
-        
-        const { data: openMaintenance, error: mError } = await supabase
-          .from('app_687f658e98_maintenance')
-          .select('vehicle_id')
-          .in('status', ['scheduled', 'in_progress']);
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      // --- Fetch overview stats ---
+      const { count: vehiclesCount, error: vError } = await supabase.from('saharax_0u4w4d_vehicles').select('*', { count: 'exact', head: true });
+      const { count: rentalsCount, error: rError } = await supabase.from('app_4c3a7a6153_rentals').select('*', { count: 'exact', head: true }).eq('rental_status', 'active');
+      
+      const { data: openMaintenance, error: mError } = await supabase
+        .from('app_687f658e98_maintenance')
+        .select('vehicle_id')
+        .in('status', ['scheduled', 'in_progress']);
 
-        const { data: revenueData, error: revError } = await supabase.from('app_4c3a7a6153_rentals').select('total_amount').eq('payment_status', 'paid');
+      const { data: revenueData, error: revError } = await supabase.from('app_4c3a7a6153_rentals').select('total_amount').eq('payment_status', 'paid');
 
-        if (vError || rError || mError || revError) {
-          const error = vError || rError || mError || revError;
-          console.error('❌ Error fetching overview stats', { message: error.message, details: error.details, hint: error.hint, code: error.code });
-        }
-
-        const maintenanceCount = openMaintenance ? new Set(openMaintenance.map(r => r.vehicle_id)).size : 0;
-        const totalRevenue = revenueData ? revenueData.reduce((acc, item) => acc + item.total_amount, 0) : 0;
-        
-        setStats({
-          vehicles: vehiclesCount || 0,
-          rentals: rentalsCount || 0,
-          maintenance: maintenanceCount || 0,
-          revenue: totalRevenue,
-        });
-
-        // --- Fetch recent bookings with vehicle type ---
-        const { data: bookings, error: bError } = await supabase
-          .from("app_4c3a7a6153_rentals")
-          .select("*, vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(*)")
-          .order("created_at", { ascending: false })
-          .limit(5);
-
-        if (bError) console.error('❌ Error fetching recent bookings', { message: bError.message, details: bError.details, hint: bError.hint, code: bError.code });
-        setRecentBookings(bookings || []);
-
-        // --- Fetch and process data for Revenue Trend Chart ---
-        const sevenDaysAgo = new Date();
-        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-        const { data: revenueTrendRaw, error: revenueTrendError } = await supabase
-          .from('app_4c3a7a6153_rentals')
-          .select('created_at, total_amount')
-          .eq('payment_status', 'paid')
-          .gte('created_at', sevenDaysAgo.toISOString());
-
-        if (revenueTrendError) console.error('❌ Error fetching revenue trend', { message: revenueTrendError.message, details: revenueTrendError.details, hint: revenueTrendError.hint, code: revenueTrendError.code });
-
-        const dailyRevenue = {};
-        if (revenueTrendRaw) {
-          revenueTrendRaw.forEach(rental => {
-            const date = new Date(rental.created_at).toISOString().split('T')[0];
-            if (!dailyRevenue[date]) dailyRevenue[date] = 0;
-            dailyRevenue[date] += rental.total_amount;
-          });
-        }
-
-        const last7DaysData = Array(7).fill(0).map((_, i) => {
-          const d = new Date();
-          d.setDate(d.getDate() - i);
-          const dateStr = d.toISOString().split('T')[0];
-          return {
-            date: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-            revenue: dailyRevenue[dateStr] || 0,
-          };
-        }).reverse();
-        setRevenueData(last7DaysData);
-
-        // --- Fetch and process data for Vehicle Utilization Chart ---
-        const { data: allRentals, error: allRentalsError } = await supabase.from('app_4c3a7a6153_rentals').select('vehicle_id');
-        const { data: allVehicles, error: allVehiclesError } = await supabase.from("saharax_0u4w4d_vehicles").select("id, vehicle_type");
-
-        if (allRentalsError || allVehiclesError) {
-            const error = allRentalsError || allVehiclesError;
-            console.error('❌ Error fetching utilization data', { message: error.message, details: error.details, hint: error.hint, code: error.code });
-        }
-
-        const utilization = {};
-        if (allRentals && allVehicles) {
-          const vehicleTypeMap = new Map(allVehicles.map(v => [v.id, v.vehicle_type]));
-          allRentals.forEach(rental => {
-            const vehicleType = vehicleTypeMap.get(rental.vehicle_id);
-            if (vehicleType) {
-              if (!utilization[vehicleType]) utilization[vehicleType] = 0;
-              utilization[vehicleType]++;
-            }
-          });
-        }
-        const utilizationChartData = Object.keys(utilization).map(type => ({ name: type, rentals: utilization[type] }));
-        setUtilizationData(utilizationChartData);
-
-      } catch (error) {
-        console.error('❌ Error in fetchData', { message: error.message, details: error.details, hint: error.hint, code: error.code });
-      } finally {
-        setLoading(false);
+      if (vError || rError || mError || revError) {
+        const error = vError || rError || mError || revError;
+        console.error('❌ Error fetching overview stats', { message: error.message, details: error.details, hint: error.hint, code: error.code });
       }
-    };
 
+      const maintenanceCount = openMaintenance ? new Set(openMaintenance.map(r => r.vehicle_id)).size : 0;
+      const totalRevenue = revenueData ? revenueData.reduce((acc, item) => acc + item.total_amount, 0) : 0;
+      
+      setStats({
+        vehicles: vehiclesCount || 0,
+        rentals: rentalsCount || 0,
+        maintenance: maintenanceCount || 0,
+        revenue: totalRevenue,
+      });
+
+      // --- Fetch recent bookings with vehicle type ---
+      const { data: bookings, error: bError } = await supabase
+        .from("app_4c3a7a6153_rentals")
+        .select("*, vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(*)")
+        .order("created_at", { ascending: false })
+        .limit(5);
+
+      if (bError) console.error('❌ Error fetching recent bookings', { message: bError.message, details: bError.details, hint: bError.hint, code: bError.code });
+      setRecentBookings(bookings || []);
+
+      // --- Fetch and process data for Revenue Trend Chart ---
+      const sevenDaysAgo = new Date();
+      sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+      const { data: revenueTrendRaw, error: revenueTrendError } = await supabase
+        .from('app_4c3a7a6153_rentals')
+        .select('created_at, total_amount')
+        .eq('payment_status', 'paid')
+        .gte('created_at', sevenDaysAgo.toISOString());
+
+      if (revenueTrendError) console.error('❌ Error fetching revenue trend', { message: revenueTrendError.message, details: revenueTrendError.details, hint: revenueTrendError.hint, code: revenueTrendError.code });
+
+      const dailyRevenue = {};
+      if (revenueTrendRaw) {
+        revenueTrendRaw.forEach(rental => {
+          const date = new Date(rental.created_at).toISOString().split('T')[0];
+          if (!dailyRevenue[date]) dailyRevenue[date] = 0;
+          dailyRevenue[date] += rental.total_amount;
+        });
+      }
+
+      const last7DaysData = Array(7).fill(0).map((_, i) => {
+        const d = new Date();
+        d.setDate(d.getDate() - i);
+        const dateStr = d.toISOString().split('T')[0];
+        return {
+          date: d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+          revenue: dailyRevenue[dateStr] || 0,
+        };
+      }).reverse();
+      setRevenueData(last7DaysData);
+
+      // --- Fetch and process data for Vehicle Utilization Chart ---
+      const { data: allRentals, error: allRentalsError } = await supabase.from('app_4c3a7a6153_rentals').select('vehicle_id');
+      const { data: allVehicles, error: allVehiclesError } = await supabase.from("saharax_0u4w4d_vehicles").select("id, vehicle_type");
+
+      if (allRentalsError || allVehiclesError) {
+          const error = allRentalsError || allVehiclesError;
+          console.error('❌ Error fetching utilization data', { message: error.message, details: error.details, hint: error.hint, code: error.code });
+      }
+
+      const utilization = {};
+      if (allRentals && allVehicles) {
+        const vehicleTypeMap = new Map(allVehicles.map(v => [v.id, v.vehicle_type]));
+        allRentals.forEach(rental => {
+          const vehicleType = vehicleTypeMap.get(rental.vehicle_id);
+          if (vehicleType) {
+            if (!utilization[vehicleType]) utilization[vehicleType] = 0;
+            utilization[vehicleType]++;
+          }
+        });
+      }
+      const utilizationChartData = Object.keys(utilization).map(type => ({ name: type, rentals: utilization[type] }));
+      setUtilizationData(utilizationChartData);
+
+    } catch (error) {
+      console.error('❌ Error in fetchData', { message: error.message, details: error.details, hint: error.hint, code: error.code });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
     fetchData();
   }, []);
 
   const handleRentalCreated = () => {
     setShowStepperForm(false);
-    // Refresh dashboard data after rental creation
-    window.location.reload();
+    // Refresh dashboard data without page reload
+    fetchData();
   };
 
   return (

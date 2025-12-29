@@ -1,357 +1,292 @@
-import TransportFeesService from './TransportFeesService';
+import { supabase } from '../lib/supabase';
 
 /**
  * AppSettingsService - Manage application-wide settings
- * 
- * FIXED: Now uses localStorage-ONLY approach to completely avoid 403 errors
- * No Supabase calls are made for transport fees
+ * NOW WITH ACTUAL DATABASE SUPPORT
  */
 class AppSettingsService {
-  static APP_ID = '8be2ccb1f0';
-  static SETTINGS_TABLE = `app_${this.APP_ID}_settings`;
+  static SETTINGS_TABLE = 'app_settings';
+  static DEFAULT_SETTINGS_ID = 1;
   
-  // localStorage keys
-  static TRANSPORT_FEES_KEY = 'mgx_transport_fees_settings';
-  static SETTINGS_PREFIX = 'mgx_app_setting_';
+  // localStorage key for caching
+  static TRANSPORT_FEES_KEY = 'mgx_transport_fees_cache';
 
   /**
-   * Get transport fees using localStorage ONLY (no database calls)
+   * Get transport fees - DATABASE FIRST, then cache fallback
    */
   static async getTransportFees() {
     try {
-      console.log('🔧 Loading transport fees from localStorage ONLY...');
+      console.log('📡 [DATABASE] Loading transport fees from app_settings table...');
       
-      // Use localStorage-only service (no database calls)
-      const fees = await TransportFeesService.getTransportFees();
-      console.log('✅ Transport fees loaded:', fees);
+      // 1. FIRST TRY DATABASE
+      const { data, error } = await supabase
+        .from(this.SETTINGS_TABLE)
+        .select('transport_pickup_fee, transport_dropoff_fee')
+        .eq('id', this.DEFAULT_SETTINGS_ID)
+        .single();
+
+      if (error) {
+        console.error('❌ Database query failed:', error.message);
+        throw error; // Go to cache fallback
+      }
+
+      // Format the response
+      const fees = {
+        pickup_fee: Number(data.transport_pickup_fee) || 0,
+        dropoff_fee: Number(data.transport_dropoff_fee) || 0
+      };
+
+      console.log('✅ [DATABASE] Loaded from app_settings table:', fees);
+      
+      // Update cache with database values
+      this.updateCache(fees);
+      
       return fees;
-      
-    } catch (err) {
-      console.error('Error loading transport fees:', err);
-      // Final fallback to legacy localStorage
-      console.log('🔄 Using legacy localStorage fallback...');
-      return this.getTransportFeesFromLocalStorage();
+
+    } catch (dbError) {
+      console.log('🔄 Database failed, using cache fallback...');
+      return this.getFromCache();
     }
   }
 
   /**
-   * Save transport fees using localStorage ONLY (no database calls)
+   * Save transport fees - SAVE TO DATABASE FIRST
    */
   static async saveTransportFees(fees) {
     try {
-      console.log('💾 Saving transport fees to localStorage ONLY:', fees);
+      console.log('💾 [DATABASE] Saving to app_settings table:', fees);
 
-      // Validate input
+      // Validate
       if (!fees || typeof fees !== 'object') {
         throw new Error('Invalid fees object');
       }
 
-      // Use localStorage-only service (no database calls)
-      const savedFees = await TransportFeesService.saveTransportFees(fees);
-      
-      // Also sync to legacy localStorage key for backward compatibility
-      this.syncToLocalStorage(savedFees);
-      
-      console.log('✅ Transport fees saved successfully:', savedFees);
-      return savedFees;
-    } catch (err) {
-      console.error('Error saving transport fees:', err);
-      
-      // Final fallback to legacy localStorage
-      console.log('🔄 Using legacy localStorage fallback...');
-      return this.saveTransportFeesToLocalStorage(fees);
-    }
-  }
+      const pickupFee = Number(fees.pickup_fee) || 0;
+      const dropoffFee = Number(fees.dropoff_fee) || 0;
 
-  /**
-   * Check system status (localStorage only)
-   */
-  static async checkSystemStatus() {
-    try {
-      const results = await TransportFeesService.initialize();
-      console.log('🔧 System status check completed (localStorage-only):', results);
-      return results;
-    } catch (err) {
-      console.error('Error checking system status:', err);
-      return {
-        database: { status: 'DISABLED', message: 'Database disabled to prevent 403 errors' },
-        localStorage: { status: 'UNKNOWN', message: 'Could not test' },
-        recommendation: 'System check failed'
-      };
-    }
-  }
-
-  /**
-   * Sync transport fees to legacy localStorage key (backward compatibility)
-   */
-  static syncToLocalStorage(fees) {
-    try {
-      if (!fees || typeof fees !== 'object') {
-        console.warn('Invalid fees object for localStorage sync:', fees);
-        return false;
+      if (pickupFee < 0 || dropoffFee < 0) {
+        throw new Error('Fees cannot be negative');
       }
 
-      const settingData = {
-        pickup_fee: parseFloat(fees.pickup_fee) || 0,
-        dropoff_fee: parseFloat(fees.dropoff_fee) || 0,
-        updated_at: new Date().toISOString()
+      // SAVE TO DATABASE
+      const { data, error } = await supabase
+        .from(this.SETTINGS_TABLE)
+        .upsert({
+          id: this.DEFAULT_SETTINGS_ID,
+          transport_pickup_fee: pickupFee,
+          transport_dropoff_fee: dropoffFee,
+          updated_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (error) {
+        console.error('❌ Database save error:', error);
+        throw new Error(`Database save failed: ${error.message}`);
+      }
+
+      // Format response
+      const savedFees = {
+        pickup_fee: Number(data.transport_pickup_fee) || 0,
+        dropoff_fee: Number(data.transport_dropoff_fee) || 0
       };
 
-      localStorage.setItem(this.TRANSPORT_FEES_KEY, JSON.stringify(settingData));
-      console.log('🔄 Transport fees synced to legacy localStorage key:', settingData);
+      console.log('✅ [DATABASE] Saved to app_settings table:', savedFees);
+      
+      // Also update cache
+      this.updateCache(savedFees);
+      
+      return savedFees;
+
+    } catch (error) {
+      console.error('❌ Error in saveTransportFees:', error);
+      
+      // Fallback: Save to cache only
+      console.log('🔄 Falling back to cache-only save');
+      return this.saveToCache(fees);
+    }
+  }
+
+  /**
+   * Update localStorage cache
+   */
+  static updateCache(fees) {
+    try {
+      const cacheData = {
+        ...fees,
+        cached_at: new Date().toISOString(),
+        source: 'database'
+      };
+      
+      localStorage.setItem(this.TRANSPORT_FEES_KEY, JSON.stringify(cacheData));
+      console.log('✅ Cache updated');
       return true;
     } catch (err) {
-      console.error('Could not sync to legacy localStorage:', err);
+      console.error('Cache update failed:', err);
       return false;
     }
   }
 
   /**
-   * Get transport fees from legacy localStorage key (backward compatibility)
+   * Get from cache (fallback)
    */
-  static getTransportFeesFromLocalStorage() {
+  static getFromCache() {
     try {
       const stored = localStorage.getItem(this.TRANSPORT_FEES_KEY);
       
       if (stored) {
-        const fees = JSON.parse(stored);
-        console.log('📱 Transport fees loaded from legacy localStorage:', fees);
+        const cached = JSON.parse(stored);
+        console.log('📱 Loaded from cache:', cached);
         return {
-          pickup_fee: parseFloat(fees.pickup_fee) || 0,
-          dropoff_fee: parseFloat(fees.dropoff_fee) || 0
+          pickup_fee: Number(cached.pickup_fee) || 0,
+          dropoff_fee: Number(cached.dropoff_fee) || 0
         };
       }
       
-      // Return default values if no settings found
-      const defaultFees = {
-        pickup_fee: 0,
-        dropoff_fee: 0
+      console.log('🔧 No cache found, returning defaults');
+      return { pickup_fee: 0, dropoff_fee: 0 };
+      
+    } catch (err) {
+      console.error('Cache read error:', err);
+      return { pickup_fee: 0, dropoff_fee: 0 };
+    }
+  }
+
+  /**
+   * Save to cache only (fallback)
+   */
+  static saveToCache(fees) {
+    try {
+      const cacheData = {
+        pickup_fee: Number(fees.pickup_fee) || 0,
+        dropoff_fee: Number(fees.dropoff_fee) || 0,
+        cached_at: new Date().toISOString(),
+        source: 'cache_only'
       };
       
-      console.log('🔧 No transport fees found, returning defaults:', defaultFees);
-      return defaultFees;
-    } catch (err) {
-      console.error('Error loading transport fees from legacy localStorage:', err);
-      // Return defaults on error
+      localStorage.setItem(this.TRANSPORT_FEES_KEY, JSON.stringify(cacheData));
+      console.log('✅ Saved to cache (fallback):', cacheData);
+      
       return {
-        pickup_fee: 0,
-        dropoff_fee: 0
+        pickup_fee: cacheData.pickup_fee,
+        dropoff_fee: cacheData.dropoff_fee
+      };
+    } catch (err) {
+      console.error('Cache save error:', err);
+      throw new Error('Failed to save fees');
+    }
+  }
+
+  /**
+   * Test database connection
+   */
+  static async testConnection() {
+    try {
+      console.log('🧪 Testing database connection to app_settings...');
+      
+      const { data, error } = await supabase
+        .from(this.SETTINGS_TABLE)
+        .select('id, transport_pickup_fee, transport_dropoff_fee')
+        .eq('id', this.DEFAULT_SETTINGS_ID)
+        .maybeSingle(); // Use maybeSingle to avoid throwing if no rows
+
+      if (error) {
+        return {
+          success: false,
+          message: `Database error: ${error.message}`,
+          error: error
+        };
+      }
+
+      return {
+        success: true,
+        message: '✅ Database connection successful',
+        data: data || { message: 'No data found, table may be empty' }
+      };
+    } catch (error) {
+      return {
+        success: false,
+        message: `Connection test failed: ${error.message}`
       };
     }
   }
 
   /**
-   * Save transport fees to legacy localStorage key (fallback method)
+   * Reset to defaults
    */
-  static saveTransportFeesToLocalStorage(fees) {
+  static async resetToDefaults() {
     try {
-      if (!fees || typeof fees !== 'object') {
-        throw new Error('Invalid fees object provided');
-      }
-
-      const settingData = {
-        pickup_fee: parseFloat(fees.pickup_fee) || 0,
-        dropoff_fee: parseFloat(fees.dropoff_fee) || 0,
-        updated_at: new Date().toISOString()
-      };
-
-      // Validate that we have valid numbers
-      if (isNaN(settingData.pickup_fee) || isNaN(settingData.dropoff_fee)) {
-        throw new Error('Invalid fee values - must be numbers');
-      }
-
-      localStorage.setItem(this.TRANSPORT_FEES_KEY, JSON.stringify(settingData));
-      console.log('✅ Transport fees saved to legacy localStorage:', settingData);
+      console.log('🔄 Resetting transport fees to defaults...');
       
-      // Verify the save by reading it back
-      const verification = localStorage.getItem(this.TRANSPORT_FEES_KEY);
-      if (!verification) {
-        throw new Error('Failed to verify localStorage save');
-      }
-      
-      const verifiedData = JSON.parse(verification);
-      console.log('✅ Verified saved data:', verifiedData);
-      
-      return {
-        pickup_fee: settingData.pickup_fee,
-        dropoff_fee: settingData.dropoff_fee
-      };
-    } catch (err) {
-      console.error('Error saving transport fees to legacy localStorage:', err);
-      throw new Error(`Failed to save transport fees: ${err.message}`);
-    }
-  }
+      const { error } = await supabase
+        .from(this.SETTINGS_TABLE)
+        .update({
+          transport_pickup_fee: 0,
+          transport_dropoff_fee: 0,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', this.DEFAULT_SETTINGS_ID);
 
-  /**
-   * Clear transport fees from all storage locations
-   */
-  static async clearTransportFees() {
-    try {
-      // Clear from enhanced service
-      TransportFeesService.clearTransportFeesFromLocalStorage();
+      if (error) throw error;
       
-      // Clear from legacy localStorage key
+      // Clear cache
       localStorage.removeItem(this.TRANSPORT_FEES_KEY);
       
-      console.log('🗑️ Transport fees cleared from all storage locations');
-      return true;
-    } catch (err) {
-      console.error('Error clearing transport fees:', err);
-      return false;
+      console.log('✅ Reset to defaults complete');
+      return { success: true, message: 'Reset to defaults successful' };
+    } catch (error) {
+      console.error('Reset failed:', error);
+      return { success: false, message: error.message };
     }
   }
 
   /**
-   * Test transport fees system functionality (localStorage only)
+   * Quick test function
    */
-  static async testTransportFeesSystem() {
+  static async quickTest() {
+    console.log('=== QUICK DATABASE TEST ===');
+    
+    // Test 1: Connection
+    const connection = await this.testConnection();
+    console.log('Connection test:', connection);
+    
+    if (!connection.success) {
+      return { success: false, message: 'Database connection failed' };
+    }
+    
+    // Test 2: Save some test data
+    const testFees = {
+      pickup_fee: 99,
+      dropoff_fee: 149
+    };
+    
+    console.log('Test 2: Saving test fees:', testFees);
+    
     try {
-      console.log('🧪 Testing transport fees system (localStorage-only)...');
+      const saved = await this.saveTransportFees(testFees);
+      console.log('Save result:', saved);
       
-      // Test system initialization
-      const systemStatus = await this.checkSystemStatus();
+      // Test 3: Load it back
+      const loaded = await this.getTransportFees();
+      console.log('Load result:', loaded);
       
-      // Test save and load
-      const testFees = {
-        pickup_fee: Math.floor(Math.random() * 100) + 10,
-        dropoff_fee: Math.floor(Math.random() * 100) + 10
-      };
+      const match = saved.pickup_fee === loaded.pickup_fee && 
+                   saved.dropoff_fee === loaded.dropoff_fee;
       
-      console.log('🧪 Testing with fees:', testFees);
-      
-      // Test save
-      const savedFees = await this.saveTransportFees(testFees);
-      
-      // Test load
-      const loadedFees = await this.getTransportFees();
-      
-      // Verify
-      const saveLoadMatch = (
-        savedFees.pickup_fee === loadedFees.pickup_fee &&
-        savedFees.dropoff_fee === loadedFees.dropoff_fee
-      );
-      
-      const results = {
-        systemStatus,
-        testFees,
-        savedFees,
-        loadedFees,
-        saveLoadMatch,
-        overallStatus: saveLoadMatch ? 'PASS' : 'FAIL'
-      };
-      
-      console.log('🧪 Transport fees system test results (localStorage-only):', results);
-      return results;
-    } catch (err) {
-      console.error('🧪 Transport fees system test failed:', err);
       return {
-        overallStatus: 'FAIL',
-        error: err.message
+        success: match,
+        message: match ? '✅ All tests passed!' : '❌ Tests failed - data mismatch',
+        saved: saved,
+        loaded: loaded,
+        match: match
       };
-    }
-  }
-
-  // Generic settings methods (unchanged)
-  static async getSetting(key, defaultValue = null) {
-    try {
-      const storageKey = this.SETTINGS_PREFIX + key;
-      const stored = localStorage.getItem(storageKey);
-      
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        return parsed.value !== undefined ? parsed.value : defaultValue;
-      }
-      
-      return defaultValue;
-    } catch (err) {
-      console.error(`Error getting setting ${key}:`, err);
-      return defaultValue;
-    }
-  }
-
-  static async saveSetting(key, value) {
-    try {
-      const storageKey = this.SETTINGS_PREFIX + key;
-      const settingData = {
-        value: value,
-        updated_at: new Date().toISOString()
-      };
-      localStorage.setItem(storageKey, JSON.stringify(settingData));
-      return value;
-    } catch (err) {
-      console.error(`Error saving setting ${key}:`, err);
-      throw new Error(`Failed to save setting: ${err.message}`);
-    }
-  }
-
-  static async getAllSettings() {
-    try {
-      const settings = {};
-      
-      // Get transport fees using the enhanced method (localStorage-only)
-      settings.transport_fees = await this.getTransportFees();
-      
-      // Scan localStorage for other settings
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith(this.SETTINGS_PREFIX)) {
-          const settingKey = key.replace(this.SETTINGS_PREFIX, '');
-          if (!settings[settingKey]) {
-            const stored = localStorage.getItem(key);
-            if (stored) {
-              try {
-                const parsed = JSON.parse(stored);
-                settings[settingKey] = parsed.value;
-              } catch (parseErr) {
-                console.warn(`Failed to parse setting ${settingKey}:`, parseErr);
-              }
-            }
-          }
-        }
-      }
-
-      return settings;
-    } catch (err) {
-      console.error('Error loading all settings:', err);
+    } catch (error) {
       return {
-        transport_fees: { pickup_fee: 0, dropoff_fee: 0 }
+        success: false,
+        message: `Test failed: ${error.message}`,
+        error: error
       };
     }
-  }
-
-  static async clearAllSettings() {
-    try {
-      // Clear transport fees
-      await this.clearTransportFees();
-      
-      // Clear other localStorage settings
-      const keysToRemove = [];
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (key && key.startsWith(this.SETTINGS_PREFIX)) {
-          keysToRemove.push(key);
-        }
-      }
-      
-      keysToRemove.forEach(key => localStorage.removeItem(key));
-      
-      console.log('✅ All settings cleared (localStorage-only)');
-      return true;
-    } catch (err) {
-      console.error('Error clearing settings:', err);
-      return false;
-    }
-  }
-
-  // Legacy methods (kept for backward compatibility)
-  static async getTransportFeesFromSupabase() {
-    console.log('⚠️ Legacy method called, redirected to localStorage-only service');
-    return this.getTransportFees();
-  }
-
-  static async saveTransportFeesToSupabase(fees) {
-    console.log('⚠️ Legacy method called, redirected to localStorage-only service');
-    return this.saveTransportFees(fees);
   }
 }
 

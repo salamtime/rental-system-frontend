@@ -7,6 +7,7 @@ import {
   Trash2,
   CheckCircle,
   Download,
+  AlertCircle,
 } from 'lucide-react';
 import CustomerService, { 
   checkCustomerRentalHistory, 
@@ -380,13 +381,51 @@ const CustomerManagementDashboard = () => {
   };
 
   const confirmBulkDelete = async () => {
-    const result = await deleteCustomers(selectedCustomerIds);
-    if (result.success) {
-      setShowBulkDeleteModal(false);
-      setSelectedCustomerIds([]);
-      await fetchData();
-    } else {
-      alert(`Error deleting customers: ${result.error}`);
+    try {
+      setActionLoading(true);
+      
+      // Filter out customers with rental history
+      const customersToDelete = aggregatedData.customers.filter(c => 
+        selectedCustomerIds.includes(c.id) && c.totalRentals === 0
+      );
+      
+      const customersWithHistory = aggregatedData.customers.filter(c => 
+        selectedCustomerIds.includes(c.id) && c.totalRentals > 0
+      );
+      
+      // Only delete customers without rental history
+      const idsToDelete = customersToDelete.map(c => c.id);
+      
+      if (idsToDelete.length === 0) {
+        alert('None of the selected customers can be deleted because they all have rental history.');
+        setShowBulkDeleteModal(false);
+        setActionLoading(false);
+        return;
+      }
+      
+      const result = await deleteCustomers(idsToDelete);
+      
+      if (result.success) {
+        // Build informative message
+        let message = `Successfully deleted ${idsToDelete.length} customer(s).`;
+        
+        if (customersWithHistory.length > 0) {
+          const skippedNames = customersWithHistory.map(c => c.full_name).join(', ');
+          message += `\n\n${customersWithHistory.length} customer(s) could not be deleted due to rental history:\n${skippedNames}`;
+        }
+        
+        alert(message);
+        setShowBulkDeleteModal(false);
+        setSelectedCustomerIds([]);
+        await fetchData();
+      } else {
+        throw new Error(result.error);
+      }
+    } catch (err) {
+      alert(`Error deleting customers: ${err.message}`);
+      console.error('Error in bulk delete:', err);
+    } finally {
+      setActionLoading(false);
     }
   };
 
@@ -679,12 +718,118 @@ const CustomerManagementDashboard = () => {
                 </div>
             </div>
         </div>
+
+        {/* View Customer Details Drawer */}
         {viewModalOpen && selectedCustomer && (
             <ViewCustomerDetailsDrawer
                 isOpen={viewModalOpen}
                 onClose={() => setViewModalOpen(false)}
                 customerId={selectedCustomer.id}
             />
+        )}
+
+        {/* Delete Confirmation Modal */}
+        {deleteModalOpen && (
+          <div className="fixed inset-0 z-50 overflow-y-auto">
+            <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+              <div 
+                className="fixed inset-0 transition-opacity bg-gray-500 bg-opacity-75"
+                onClick={() => setDeleteModalOpen(false)}
+              ></div>
+
+              <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+                <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                  <div className="sm:flex sm:items-start">
+                    <div className="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
+                      <AlertCircle className="h-6 w-6 text-red-600" />
+                    </div>
+                    <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
+                      <h3 className="text-lg leading-6 font-medium text-gray-900">
+                        Delete Customer
+                      </h3>
+                      <div className="mt-2">
+                        <p className="text-sm text-gray-500">
+                          Are you sure you want to delete <span className="font-semibold">{selectedCustomer?.full_name}</span>? 
+                          This action cannot be undone and will permanently remove all customer data.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                  <button
+                    type="button"
+                    onClick={handleDeleteCustomer}
+                    disabled={actionLoading}
+                    className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50"
+                  >
+                    {actionLoading ? 'Deleting...' : 'Delete'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDeleteModalOpen(false)}
+                    disabled={actionLoading}
+                    className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Bulk Delete Confirmation Modal */}
+        {showBulkDeleteModal && (
+          <div className="fixed inset-0 z-50 overflow-y-auto">
+            <div className="flex items-center justify-center min-h-screen px-4 pt-4 pb-20 text-center sm:block sm:p-0">
+              <div 
+                className="fixed inset-0 transition-opacity bg-gray-500 bg-opacity-75"
+                onClick={() => setShowBulkDeleteModal(false)}
+              ></div>
+
+              <div className="inline-block align-bottom bg-white rounded-lg text-left overflow-hidden shadow-xl transform transition-all sm:my-8 sm:align-middle sm:max-w-lg sm:w-full">
+                <div className="bg-white px-4 pt-5 pb-4 sm:p-6 sm:pb-4">
+                  <div className="sm:flex sm:items-start">
+                    <div className="mx-auto flex-shrink-0 flex items-center justify-center h-12 w-12 rounded-full bg-red-100 sm:mx-0 sm:h-10 sm:w-10">
+                      <AlertCircle className="h-6 w-6 text-red-600" />
+                    </div>
+                    <div className="mt-3 text-center sm:mt-0 sm:ml-4 sm:text-left">
+                      <h3 className="text-lg leading-6 font-medium text-gray-900">
+                        Delete Multiple Customers
+                      </h3>
+                      <div className="mt-2">
+                        <p className="text-sm text-gray-500">
+                          Are you sure you want to delete the selected customers?
+                        </p>
+                        <p className="text-sm text-gray-500 mt-2">
+                          <span className="font-semibold">Note:</span> Only customers without rental history can be deleted. Customers with existing rentals will be skipped automatically.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+                <div className="bg-gray-50 px-4 py-3 sm:px-6 sm:flex sm:flex-row-reverse">
+                  <button
+                    type="button"
+                    onClick={confirmBulkDelete}
+                    disabled={actionLoading}
+                    className="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-red-600 text-base font-medium text-white hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50"
+                  >
+                    {actionLoading ? 'Deleting...' : 'Delete Selected'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowBulkDeleteModal(false)}
+                    disabled={actionLoading}
+                    className="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 shadow-sm px-4 py-2 bg-white text-base font-medium text-gray-700 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 sm:mt-0 sm:ml-3 sm:w-auto sm:text-sm disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
         )}
     </div>
   );

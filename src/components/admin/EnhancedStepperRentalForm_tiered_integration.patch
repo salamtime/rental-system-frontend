@@ -1,0 +1,164 @@
+// This file documents the integration points for tiered pricing in EnhancedStepperRentalForm.jsx
+
+// ==================== STEP 1: ADD IMPORT ====================
+// Add this import at the top of the file (around line 26-27):
+import TieredPricingSelector from './TieredPricingSelector';
+import { calculateTieredPrice } from '../../utils/pricingCalculations';
+
+// ==================== STEP 2: ADD STATE FOR TIERED PRICING ====================
+// Inside useRentalWizard hook, add these state variables (around line 106):
+const [selectedTieredHours, setSelectedTieredHours] = useState(null);
+const [tieredPricingEnabled, setTieredPricingEnabled] = useState(false);
+
+// ==================== STEP 3: MODIFY getRealPricing FUNCTION ====================
+// Update the getRealPricing function to check for tiered pricing (around line 343-415)
+// Add this check after getting the base price:
+
+// Check if dynamic pricing is enabled for this vehicle
+if (basePrice.dynamic_pricing_enabled && formData.quantity_days > 0) {
+  try {
+    const tieredResult = await calculateTieredPrice(
+      vehicle.vehicle_model_id, 
+      formData.quantity_days, 
+      parseFloat(basePrice.hourly_price)
+    );
+    
+    if (tieredResult.tierUsed) {
+      console.log('✅ Using tiered pricing:', tieredResult);
+      return { 
+        price: tieredResult.totalPrice / formData.quantity_days, // Return per-unit price
+        source: 'tiered',
+        savings: tieredResult.savings,
+        tierInfo: tieredResult.tierUsed
+      };
+    }
+  } catch (err) {
+    console.warn('⚠️ Tiered pricing calculation failed, falling back to base price:', err);
+  }
+}
+
+// ==================== STEP 4: ADD TIERED HOURS HANDLER ====================
+// Add this handler function in the useRentalWizard hook (around line 655):
+
+const handleTieredHoursSelect = async (hours, price) => {
+  console.log('🎯 Tiered hours selected:', hours, 'Price:', price);
+  
+  if (!formData.rental_start_date || !formData.rental_start_time) {
+    toast.error('Please set start date and time first');
+    return;
+  }
+  
+  const startDateTime = composeDateTime(formData.rental_start_date, formData.rental_start_time);
+  if (!startDateTime) {
+    toast.error('Invalid start date/time');
+    return;
+  }
+  
+  const endDateTime = new Date(startDateTime.getTime() + (hours * 60 * 60 * 1000));
+  
+  setSelectedTieredHours(hours);
+  setSelectedQuickDuration(null); // Clear quick duration
+  
+  setFormData(prev => ({
+    ...prev,
+    rental_end_date: formatDateToYYYYMMDD(endDateTime),
+    rental_end_time: endDateTime.toTimeString().slice(0, 5),
+    quantity_days: hours,
+    unit_price: price / hours // Set per-hour price
+  }));
+  
+  toast.success(`✅ Set ${hours}-hour rental with tiered pricing`);
+};
+
+// ==================== STEP 5: UPDATE RETURN VALUES ====================
+// Add these to the return statement of useRentalWizard (around line 1398):
+selectedTieredHours,
+tieredPricingEnabled,
+handleTieredHoursSelect,
+
+// ==================== STEP 6: INTEGRATE COMPONENT IN UI ====================
+// In the SimplifiedRentalWizard component, destructure the new values (around line 1880):
+selectedTieredHours,
+tieredPricingEnabled,
+handleTieredHoursSelect,
+
+// ==================== STEP 7: ADD TIERED PRICING SELECTOR TO STEP 2 ====================
+// Replace the "Quick Select Duration" section (around line 2410-2433) with:
+
+{formData.rental_type === 'hourly' && formData.vehicle_id && (
+  <>
+    {/* Tiered Pricing Selector */}
+    <TieredPricingSelector
+      vehicleModelId={(() => {
+        const vehicle = getSelectedVehicle();
+        return vehicle?.vehicle_model_id;
+      })()}
+      baseHourlyRate={autoCalculatedPrice || formData.unit_price}
+      selectedHours={selectedTieredHours}
+      onHoursChange={(hours) => {
+        const vehicle = getSelectedVehicle();
+        if (vehicle?.vehicle_model_id) {
+          calculateTieredPrice(
+            vehicle.vehicle_model_id,
+            hours,
+            autoCalculatedPrice || formData.unit_price
+          ).then(result => {
+            handleTieredHoursSelect(hours, result.totalPrice);
+          });
+        }
+      }}
+      onPriceChange={(price) => {
+        console.log('Tiered price changed:', price);
+      }}
+      disabled={successfullySubmitted}
+      maxHours={24}
+    />
+
+    {/* Fallback: Quick Select Duration (if tiered pricing not available) */}
+    {!selectedTieredHours && (
+      <div className="mt-4">
+        <label className="block text-sm font-medium text-gray-700 mb-2">
+          Quick Select Duration (Standard Pricing)
+        </label>
+        <div className="flex gap-2">
+          {[1, 2, 3].map((hours) => (
+            <button
+              key={hours}
+              type="button"
+              onClick={() => handleQuickHourSelect(hours)}
+              disabled={successfullySubmitted}
+              className={`flex-1 px-3 py-2 rounded-lg transition-colors text-sm font-medium ${
+                selectedQuickDuration === hours
+                  ? 'bg-blue-500 text-white border-2 border-blue-600'
+                  : 'bg-gray-100 hover:bg-gray-200 text-gray-700 border-2 border-transparent'
+              } ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              {hours} {hours === 1 ? 'Hour' : 'Hours'}
+            </button>
+          ))}
+        </div>
+      </div>
+    )}
+  </>
+)}
+
+// ==================== STEP 8: UPDATE PRICE CALCULATOR NOTES ====================
+// Update the PriceCalculator component notes (around line 1836-1842) to include tiered pricing info:
+
+<div className="mt-3 p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-700">
+  {pricingSource === 'database' ? (
+    <>💡 <strong>Using live database pricing.</strong> Edit button allows manual override (requires approval for staff).</>
+  ) : pricingSource === 'tiered' ? (
+    <>🎯 <strong>Using tiered pricing.</strong> You're getting the best rate based on rental duration. Manual edits require approval for staff.</>
+  ) : (
+    <>⚠️ <strong>Using default pricing.</strong> Configure vehicle prices in Pricing Management.</>
+  )}
+</div>
+
+// ==================== INTEGRATION COMPLETE ====================
+// The tiered pricing system is now integrated with:
+// 1. Automatic price calculation based on duration
+// 2. Dropdown selector showing all pricing options with savings
+// 3. User-friendly notes explaining benefits
+// 4. Fallback to standard pricing if tiered pricing unavailable
+// 5. Manual override capability with approval workflow

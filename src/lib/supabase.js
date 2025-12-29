@@ -14,12 +14,23 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
+    detectSessionInUrl: true,
+    // FIXED: Prevent automatic token refresh on browser focus/visibility changes
+    // This was causing page refreshes when switching between browsers
+    storage: window.localStorage,
+    storageKey: 'supabase.auth.token',
+    flowType: 'pkce'
   },
   realtime: {
     params: {
       eventsPerSecond: 10,
     },
   },
+  global: {
+    headers: {
+      'x-application-name': 'rental-management-system'
+    }
+  }
 })
 
 // Service role client for admin operations (use carefully)

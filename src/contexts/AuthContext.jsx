@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { supabase } from '../lib/supabase';
 import { getUserPermissions } from '../services/UserService';
 
@@ -17,8 +17,15 @@ export const AuthProvider = ({ children }) => {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [initialized, setInitialized] = useState(false);
+  const isLoadingProfile = useRef(false);
 
   const loadUserProfile = useCallback(async (authUser, session) => {
+    // Prevent duplicate profile loads
+    if (isLoadingProfile.current) {
+      console.log('🔄 Profile load already in progress, skipping...');
+      return;
+    }
+
     if (!authUser) {
       setUserProfile(null);
       setSession(null);
@@ -26,6 +33,8 @@ export const AuthProvider = ({ children }) => {
       setInitialized(true);
       return;
     }
+
+    isLoadingProfile.current = true;
 
     try {
       const userRole = authUser.user_metadata?.role || 'customer';
@@ -72,27 +81,61 @@ export const AuthProvider = ({ children }) => {
     } finally {
       setLoading(false);
       setInitialized(true);
+      isLoadingProfile.current = false;
     }
   }, []);
 
   useEffect(() => {
+    let mounted = true;
+    let authListener = null;
+
     const initializeAuth = async () => {
-      const { data: { session: currentSession } } = await supabase.auth.getSession();
-      await loadUserProfile(currentSession?.user ?? null, currentSession);
-
-      const { data: authListener } = supabase.auth.onAuthStateChange(
-        async (event, newSession) => {
-          setLoading(true);
-          await loadUserProfile(newSession?.user ?? null, newSession);
+      try {
+        const { data: { session: currentSession } } = await supabase.auth.getSession();
+        
+        if (mounted) {
+          await loadUserProfile(currentSession?.user ?? null, currentSession);
         }
-      );
 
-      return () => {
-        authListener.subscription.unsubscribe();
-      };
+        // Set up auth state listener
+        const { data: listener } = supabase.auth.onAuthStateChange(
+          async (event, newSession) => {
+            console.log('🔐 Auth state change:', event);
+            
+            // Only reload profile on significant auth events
+            if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'USER_UPDATED') {
+              if (mounted) {
+                setLoading(true);
+                await loadUserProfile(newSession?.user ?? null, newSession);
+              }
+            } else if (event === 'TOKEN_REFRESHED') {
+              // Just update the session without reloading the entire profile
+              console.log('🔄 Token refreshed silently');
+              if (mounted) {
+                setSession(newSession);
+              }
+            }
+          }
+        );
+
+        authListener = listener;
+      } catch (error) {
+        console.error('Auth initialization error:', error);
+        if (mounted) {
+          setLoading(false);
+          setInitialized(true);
+        }
+      }
     };
 
     initializeAuth();
+
+    return () => {
+      mounted = false;
+      if (authListener) {
+        authListener.subscription.unsubscribe();
+      }
+    };
   }, [loadUserProfile]);
 
   const signIn = async (email, password) => {

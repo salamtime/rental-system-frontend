@@ -12,9 +12,6 @@ import ViewCustomerDetailsDrawer from '../../components/admin/ViewCustomerDetail
 import RentalContract from '../../components/admin/RentalContract';
 import SignaturePadModal from '../../components/SignaturePadModal';
 import SecondDriverDetailsModal from '../../components/admin/SecondDriverDetailsModal';
-import ExtensionRequestModal from '../../components/admin/ExtensionRequestModal';
-import ExtensionHistory from '../../components/admin/ExtensionHistory';
-import ExtensionPricingService from '../../services/ExtensionPricingService';
 import { useReactToPrint } from 'react-to-print';
 import { getPaymentStatusStyle } from '../../config/statusColors';
 import { isAdminOrOwner, canApprovePriceOverrides } from '../../utils/permissionHelpers';
@@ -40,10 +37,7 @@ import {
   Edit,
   Save,
   DollarSign,
-  StopCircle,
-  Video,
-  FileVideo,
-  Info
+  StopCircle
 } from 'lucide-react';
 import { FaWhatsapp } from 'react-icons/fa';
 import html2canvas from 'html2canvas';
@@ -89,20 +83,8 @@ export default function RentalDetails() {
   const [priceOverrideReason, setPriceOverrideReason] = useState('');
   const [isSavingPrice, setIsSavingPrice] = useState(false);
 
-  // Video refresh trigger
+  // Video refresh trigger - increment this to force RentalVideos to reload
   const [videoRefreshKey, setVideoRefreshKey] = useState(0);
-
-  // Extension state
-  const [extensionModalOpen, setExtensionModalOpen] = useState(false);
-  const [extensions, setExtensions] = useState([]);
-  const [loadingExtensions, setLoadingExtensions] = useState(false);
-
-  // Late fee state
-  const [lateFee, setLateFee] = useState(null);
-
-  // Deposit return state
-  const [showDepositSignatureModal, setShowDepositSignatureModal] = useState(false);
-  const [depositReturnAmount, setDepositReturnAmount] = useState(0);
 
   const [customerDetailsDrawer, setCustomerDetailsDrawer] = useState({
     isOpen: false,
@@ -112,7 +94,6 @@ export default function RentalDetails() {
 
   const contractRef = useRef();
   const invoiceRef = useRef();
-  
   const handlePrintContract = useReactToPrint({
     content: () => contractRef.current,
     documentTitle: `Rental-Contract-${rental?.id}`,
@@ -152,6 +133,7 @@ export default function RentalDetails() {
         const { data: { user } } = await supabase.auth.getUser();
         
         if (user) {
+          // Fetch user profile from database to get role
           const { data: userProfile, error } = await supabase
             .from('app_4c3a7a6153_users')
             .select('role, full_name')
@@ -171,97 +153,7 @@ export default function RentalDetails() {
     getCurrentUser();
   }, []);
 
-  // Load extensions for this rental
-  const loadExtensions = async () => {
-    if (!id) return;
-    
-    setLoadingExtensions(true);
-    try {
-      const { extensions: extensionData } = await ExtensionPricingService.getExtensionsByRental(id);
-      setExtensions(extensionData || []);
-      console.log('✅ Extensions loaded:', extensionData?.length || 0);
-    } catch (err) {
-      console.error('❌ Error loading extensions:', err);
-    } finally {
-      setLoadingExtensions(false);
-    }
-  };
-
-  // Load rental data
-  const loadRentalData = async () => {
-    if (!id) return;
-    
-    try {
-      const { data, error } = await supabase
-        .from('app_4c3a7a6153_rentals')
-        .select(`
-          *,
-          vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(*)
-        `)
-        .eq('id', id)
-        .single();
-
-      if (error) throw error;
-      
-      let rentalData = data;
-
-      const deposit = parseFloat(rentalData.deposit_amount) || 0;
-      const total = parseFloat(rentalData.total_amount) || 0;
-      
-      if (rentalData.payment_status !== 'overdue') {
-          if (total > 0) {
-              if (deposit <= 0) {
-                  rentalData.payment_status = 'unpaid';
-              } else if (deposit >= total) {
-                  rentalData.payment_status = 'paid';
-              } else {
-                  rentalData.payment_status = 'partial';
-              }
-          } else {
-              rentalData.payment_status = 'unpaid';
-          }
-      }
-
-      setRental(rentalData);
-      await loadRentalMedia(rentalData.id);
-      
-    } catch (err) {
-      console.error('❌ Error loading rental:', err);
-      setError('Failed to load rental details');
-    }
-  };
-
-  // Load extensions when rental is loaded
-  useEffect(() => {
-    if (rental?.id) {
-      loadExtensions();
-    }
-  }, [rental?.id]);
-
-  // Calculate late fee for completed rentals
-  useEffect(() => {
-    const calculateLateFee = async () => {
-      if (rental?.rental_status === 'completed') {
-        try {
-          const { data, error } = await supabase.rpc(
-            'calculate_late_fee',
-            { p_rental_id: rental.id }
-          );
-          
-          if (!error && data?.is_late) {
-            setLateFee(data);
-          }
-        } catch (error) {
-          console.error('Error calculating late fee:', error);
-        }
-      }
-    };
-    
-    calculateLateFee();
-  }, [rental]);
-
-  // Generate and send invoice
-  const handleGenerateInvoice = async () => {
+  const handleShareViaWhatsApp = async () => {
     if (!rental?.customer_phone) {
       alert("Customer phone number is not available.");
       return;
@@ -312,6 +204,7 @@ export default function RentalDetails() {
         videoUrl = allMedia[0].public_url;
       }
 
+      // Clean message without emojis
       const message = `Hi ${rental.customer_name}!\n\nYour rental documents:\nInvoice: ${invoiceUrl}\nVideo: ${videoUrl}\n\nThank you!`;
       
       const encodedMessage = encodeURIComponent(message);
@@ -320,87 +213,16 @@ export default function RentalDetails() {
       window.location.href = whatsappUrl;
 
     } catch (err) {
-      console.error('❌ Error:', err);
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
       alert(`Failed to share via WhatsApp. Error: ${err.message}`);
     } finally {
       setIsSharing(false);
     }
   };
 
-  // Handle extension request creation
-  const handleExtensionCreated = async () => {
-    console.log('🔄 Extension created, reloading data...');
-    
-    // Reload rental data
-    await loadRentalData();
-    
-    // Reload extensions
-    await loadExtensions();
-    
-    // Auto-generate and send updated invoice after a short delay
-    setTimeout(async () => {
-      console.log('📄 Auto-generating updated invoice after extension...');
-      try {
-        await handleGenerateInvoice();
-        console.log('✅ Invoice regenerated and sent after extension');
-      } catch (error) {
-        console.error('❌ Failed to regenerate invoice after extension:', error);
-      }
-    }, 2000);
-  };
-
-  // Handle extension approval
-  const handleApproveExtension = async (extensionId) => {
-    if (!confirm('Approve this extension request?')) return;
-    
-    try {
-      const result = await ExtensionPricingService.approveExtension(extensionId, currentUser?.id);
-      alert('✅ Extension approved successfully!');
-      await handleExtensionCreated();
-    } catch (err) {
-      console.error('❌ Error approving extension:', err);
-      alert(`Failed to approve extension: ${err.message}`);
-    }
-  };
-
-  // Handle extension rejection - FIXED: No prompt, just reject
-  const handleRejectExtension = async (extensionId) => {
-    if (!confirm('Cancel this extension request?')) return;
-    
-    try {
-      await ExtensionPricingService.rejectExtension(extensionId, currentUser?.id, null);
-      alert('✅ Extension request cancelled.');
-      await loadExtensions();
-    } catch (err) {
-      console.error('❌ Error rejecting extension:', err);
-      alert(`Failed to cancel extension: ${err.message}`);
-    }
-  };
-
-  const handleShareViaWhatsApp = async () => {
-    await handleGenerateInvoice();
-  };
-
   const isPaymentSufficient = () => {
     const status = rental?.payment_status?.toLowerCase();
     return status === 'paid';
-  };
-
-  // Calculate deposit return amount after deducting unpaid balance
-  const calculateDepositReturn = () => {
-    const damageDeposit = parseFloat(rental?.damage_deposit || 0);
-    const remainingAmount = parseFloat(rental?.remaining_amount || 0);
-    const unpaidAmount = Math.max(0, remainingAmount);
-    
-    // Deduct unpaid amount from damage deposit
-    const returnAmount = Math.max(0, damageDeposit - unpaidAmount);
-    
-    return {
-      damageDeposit,
-      unpaidAmount,
-      returnAmount,
-      deductionApplied: unpaidAmount > 0
-    };
   };
 
   const getPaymentStatusBadge = (paymentStatus) => {
@@ -420,6 +242,10 @@ export default function RentalDetails() {
     try {
       setIsUpdatingPayment(true);
       
+      console.log('💰 Updating payment status - frontend only approach');
+      
+      // FRONTEND-ONLY FIX: Direct minimal update
+      // Only update the exact payment fields, nothing else
       const { error: updateError } = await supabase
         .from('app_4c3a7a6153_rentals')
         .update({
@@ -434,6 +260,9 @@ export default function RentalDetails() {
         throw updateError;
       }
 
+      console.log('✅ Payment updated successfully');
+
+      // Update local state immediately
       setRental(prev => ({
         ...prev,
         payment_status: 'paid',
@@ -444,8 +273,16 @@ export default function RentalDetails() {
       alert('✅ Payment status updated to "Paid"!');
       
     } catch (err) {
-      console.error('❌ Payment Update Error:', err);
-      alert('⚠️ Unable to update payment status.');
+      console.error('❌ Payment Update Error', { 
+        message: err.message, 
+        details: err.details, 
+        hint: err.hint, 
+        code: err.code 
+      });
+      
+      // User-friendly error message
+      alert('⚠️ Unable to update payment status. This rental may have a vehicle availability constraint. Please contact your system administrator to resolve this database issue.');
+      
     } finally {
       setIsUpdatingPayment(false);
     }
@@ -469,34 +306,8 @@ export default function RentalDetails() {
       setRental(data);
       alert('✅ Contract signed and signature saved!');
     } catch (err) {
-      console.error('❌ Error:', err);
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
       alert(`Failed to save signature. Error: ${err.message}`);
-    }
-  };
-
-  // Handle deposit return signature
-  const handleDepositSignatureSave = async (signatureUrl) => {
-    try {
-      const depositCalc = calculateDepositReturn();
-      
-      const { error } = await supabase
-        .from('app_4c3a7a6153_rentals')
-        .update({
-          deposit_return_signature_url: signatureUrl,
-          deposit_returned_at: new Date().toISOString(),
-          deposit_return_amount: depositCalc.returnAmount,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', rental.id);
-
-      if (error) throw error;
-
-      setShowDepositSignatureModal(false);
-      await loadRentalData();
-      alert(`✅ Deposit return confirmed! Amount returned: ${depositCalc.returnAmount.toFixed(2)} MAD`);
-    } catch (err) {
-      console.error('Error saving deposit signature:', err);
-      alert(`Failed to save deposit return signature. Error: ${err.message}`);
     }
   };
 
@@ -510,7 +321,7 @@ export default function RentalDetails() {
         .order('created_at', { ascending: false });
 
       if (mediaError) {
-        console.error('❌ Error:', mediaError);
+        console.error('❌ Supabase Error', { message: mediaError.message, details: mediaError.details, hint: mediaError.hint, code: mediaError.code });
         return;
       }
 
@@ -524,7 +335,7 @@ export default function RentalDetails() {
         setClosingMedia([]);
       }
     } catch (err) {
-      console.error('❌ Error:', err);
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
     }
   };
 
@@ -532,9 +343,43 @@ export default function RentalDetails() {
     const loadRental = async () => {
       try {
         setLoading(true);
-        await loadRentalData();
+        
+        const { data, error } = await supabase
+          .from('app_4c3a7a6153_rentals')
+          .select(`
+            *,
+            vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(*)
+          `)
+          .eq('id', id)
+          .single();
+
+        if (error) throw error;
+        
+        let rentalData = data;
+
+        // Correct payment status logic
+        const deposit = parseFloat(rentalData.deposit_amount) || 0;
+        const total = parseFloat(rentalData.total_amount) || 0;
+        
+        if (rentalData.payment_status !== 'overdue') {
+            if (total > 0) {
+                if (deposit <= 0) {
+                    rentalData.payment_status = 'unpaid';
+                } else if (deposit >= total) {
+                    rentalData.payment_status = 'paid';
+                } else {
+                    rentalData.payment_status = 'partial';
+                }
+            } else {
+                rentalData.payment_status = 'unpaid';
+            }
+        }
+
+        setRental(rentalData);
+        await loadRentalMedia(rentalData.id);
+        
       } catch (err) {
-        console.error('❌ Error:', err);
+        console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
         setError('Failed to load rental details');
       } finally {
         setLoading(false);
@@ -546,29 +391,14 @@ export default function RentalDetails() {
     }
   }, [id]);
 
-  // Calculate time remaining - FIXED to use actual start time
+  // Calculate time remaining (for scheduled end date)
   useEffect(() => {
-    if (!rental?.rental_start_date || !rental?.rental_end_date) return;
+    if (!rental?.rental_end_date) return;
 
     const calculateTimeRemaining = () => {
       const now = new Date();
-      
-      // Calculate the planned rental duration in milliseconds
-      const plannedStart = new Date(rental.rental_start_date);
-      const plannedEnd = new Date(rental.rental_end_date);
-      const plannedDuration = plannedEnd - plannedStart;
-      
-      // If rental is active and has started_at, calculate end time from actual start
-      let actualEndTime;
-      if (rental.rental_status === 'active' && rental.started_at) {
-        const actualStart = new Date(rental.started_at);
-        actualEndTime = new Date(actualStart.getTime() + plannedDuration);
-      } else {
-        // For scheduled rentals, use the planned end date
-        actualEndTime = plannedEnd;
-      }
-      
-      const diff = actualEndTime - now;
+      const endDate = new Date(rental.rental_end_date);
+      const diff = endDate - now;
 
       if (diff <= 0) {
         setTimeRemaining('Expired');
@@ -586,12 +416,15 @@ export default function RentalDetails() {
       }
     };
 
+    // Run immediately
     calculateTimeRemaining();
+    
+    // Then run every minute
     const interval = setInterval(calculateTimeRemaining, 60000);
     return () => clearInterval(interval);
-  }, [rental?.rental_start_date, rental?.rental_end_date, rental?.started_at, rental?.rental_status]);
+  }, [rental?.rental_end_date]);
 
-  // Calculate elapsed time
+  // Calculate elapsed time (only when rental is active)
   useEffect(() => {
     if (!rental?.started_at || rental.rental_status !== 'active') {
       setElapsedTime('');
@@ -626,6 +459,9 @@ export default function RentalDetails() {
     input.accept = 'video/*';
     input.multiple = false;
     
+    // FIXED: Removed capture attribute to allow users to choose between camera and gallery
+    // This allows the native file picker to appear on mobile devices
+    
     input.onchange = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
@@ -658,7 +494,7 @@ export default function RentalDetails() {
         setCapturedFiles(prev => [...prev, fileObj]);
         setIsUploading(false);
       } catch (err) {
-        console.error('❌ Error:', err);
+        console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
         alert('Upload failed. Please try again.');
         setIsUploading(false);
       }
@@ -675,14 +511,6 @@ export default function RentalDetails() {
       }
       return prev.filter(file => file.id !== fileId);
     });
-  };
-
-  const formatFileSize = (bytes) => {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
   };
 
   const saveMedia = async (phase) => {
@@ -723,6 +551,8 @@ export default function RentalDetails() {
       const { error: mediaError } = await supabase.from('app_2f7bf469b0_rental_media').insert(mediaRecord);
       if (mediaError) throw new Error(`Failed to save media record: ${mediaError.message}`);
 
+      // Don't auto-start rental when uploading opening video
+      // Just save the media, user will click "Start Now" button to begin rental
       let rentalUpdate = {};
       if(phase === 'closing') {
           rentalUpdate = { rental_status: 'completed', completed_at: new Date().toISOString() };
@@ -738,7 +568,10 @@ export default function RentalDetails() {
           setRental(updatedRental);
       }
 
+      // FIXED: Reload media and trigger video component refresh
       await loadRentalMedia(rental.id);
+      
+      // Increment the refresh key to force RentalVideos component to reload
       setVideoRefreshKey(prev => prev + 1);
       
       alert(`${phase.charAt(0).toUpperCase() + phase.slice(1)} video saved successfully!`);
@@ -749,7 +582,7 @@ export default function RentalDetails() {
       if(phase === 'closing') setClosingModalOpen(false);
 
     } catch (error) {
-      console.error('❌ Error:', error);
+      console.error('❌ Supabase Error', { message: error.message, details: error.details, hint: error.hint, code: error.code });
       alert(error.message || `Failed to save ${phase} video`);
     } finally {
       setIsProcessingVideo(false);
@@ -768,6 +601,7 @@ export default function RentalDetails() {
     }
 
     try {
+      // Update rental status to active and set started_at timestamp
       const { data: updatedRental, error: rentalError } = await supabase
         .from('app_4c3a7a6153_rentals')
         .update({ rental_status: 'active', started_at: new Date().toISOString() })
@@ -777,6 +611,7 @@ export default function RentalDetails() {
 
       if (rentalError) throw rentalError;
       
+      // Update vehicle status to "rented" (lowercase for consistency)
       if (rental.vehicle_id) {
         const { error: vehicleError } = await supabase
           .from('saharax_0u4w4d_vehicles')
@@ -785,6 +620,9 @@ export default function RentalDetails() {
         
         if (vehicleError) {
           console.error('Failed to update vehicle status:', vehicleError);
+          // Don't throw error, rental is already started
+        } else {
+          console.log('✅ Vehicle status updated to "rented"');
         }
       }
       
@@ -792,7 +630,7 @@ export default function RentalDetails() {
       setRental(updatedRental);
       
     } catch (err) {
-      console.error('❌ Error:', err);
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
       alert('Failed to start rental. Please try again.');
     }
   };
@@ -811,6 +649,7 @@ export default function RentalDetails() {
 
       if (error) throw error;
       
+      // Update vehicle status to "available" when rental is completed
       if (rental.vehicle_id) {
         const { error: vehicleError } = await supabase
           .from('saharax_0u4w4d_vehicles')
@@ -819,13 +658,15 @@ export default function RentalDetails() {
         
         if (vehicleError) {
           console.error('Failed to update vehicle status:', vehicleError);
+        } else {
+          console.log('✅ Vehicle status updated to "available"');
         }
       }
       
       alert('Rental completed successfully!');
       navigate('/admin/rentals');
     } catch (err) {
-      console.error('❌ Error:', err);
+      console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
       alert('Failed to complete rental. Please try again.');
     }
   };
@@ -840,6 +681,7 @@ export default function RentalDetails() {
 
         if (error) throw error;
         
+        // Update vehicle status to "available" when rental is cancelled
         if (rental.vehicle_id) {
           const { error: vehicleError } = await supabase
             .from('saharax_0u4w4d_vehicles')
@@ -848,13 +690,15 @@ export default function RentalDetails() {
           
           if (vehicleError) {
             console.error('Failed to update vehicle status:', vehicleError);
+          } else {
+            console.log('✅ Vehicle status updated to "available"');
           }
         }
         
         alert('Rental cancelled successfully!');
         navigate('/admin/rentals');
       } catch (err) {
-        console.error('❌ Error:', err);
+        console.error('❌ Supabase Error', { message: err.message, details: err.details, hint: err.hint, code: err.code });
         alert('Failed to cancel rental. Please try again.');
       }
     }
@@ -868,6 +712,7 @@ export default function RentalDetails() {
     });
   };
 
+  // Price editing handlers
   const handleEditPrice = () => {
     setManualPrice(rental.total_amount?.toString() || '');
     setPriceOverrideReason('');
@@ -896,6 +741,7 @@ export default function RentalDetails() {
       };
 
       if (isAdmin) {
+        // Admin/Owner: Update immediately
         updateData.total_amount = newPrice;
         updateData.remaining_amount = Math.max(0, newPrice - (parseFloat(rental.deposit_amount) || 0));
         updateData.approval_status = 'auto';
@@ -903,6 +749,7 @@ export default function RentalDetails() {
         updateData.price_override_reason = priceOverrideReason || null;
         updateData.requested_by_id = currentUser?.id;
       } else {
+        // Employee/Guide: Set pending status
         updateData.approval_status = 'pending';
         updateData.pending_total_request = newPrice;
         updateData.price_override_reason = priceOverrideReason || null;
@@ -988,6 +835,7 @@ export default function RentalDetails() {
     }
 
     try {
+      // Recalculate price using PricingRulesService
       let autoCalculatedPrice = rental.total_amount;
       
       if (rental.vehicle?.id && rental.rental_start_date && rental.rental_end_date) {
@@ -1002,7 +850,7 @@ export default function RentalDetails() {
             autoCalculatedPrice = priceResult.price;
           }
         } catch (calcError) {
-          console.warn('⚠️ Could not recalculate price:', calcError);
+          console.warn('⚠️ Could not recalculate price, keeping current total_amount:', calcError);
         }
       }
 
@@ -1032,18 +880,11 @@ export default function RentalDetails() {
     }
   };
 
+  // Callback function to handle video updates from RentalVideos component
   const handleVideoUpdate = () => {
     console.log('🔄 Video update triggered, refreshing media...');
     loadRentalMedia(rental.id);
     setVideoRefreshKey(prev => prev + 1);
-  };
-
-  const formatCurrency = (amount) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'decimal',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    }).format(amount || 0);
   };
 
   if (loading) return <div className="flex items-center justify-center min-h-screen"><p>Loading...</p></div>;
@@ -1069,8 +910,13 @@ export default function RentalDetails() {
   const isPendingApproval = rental.approval_status === 'pending';
   const isAdmin = canApprovePriceOverrides(currentUser);
   
+  // Check if contract can be signed: must have opening video AND not already signed
   const canSignContract = hasOpeningVideo && !rental.contract_signed && !rental.signature_url;
+  
+  // Check if WhatsApp can be sent: contract must be signed
   const canSendWhatsApp = rental.contract_signed || !!rental.signature_url;
+  
+  // Check if invoice can be generated: contract must be signed
   const canGenerateInvoice = rental.contract_signed || !!rental.signature_url;
 
   const formattedRentalForInvoice = {
@@ -1082,7 +928,7 @@ export default function RentalDetails() {
   };
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-4xl pb-20 sm:pb-8">
+    <div className="container mx-auto px-4 py-8 max-w-4xl pb-40 sm:pb-8">
       <div className="flex justify-between items-center mb-6">
         <Button onClick={() => navigate('/admin/rentals')} variant="outline">
           <ArrowLeft className="w-4 h-4 mr-2" />
@@ -1128,192 +974,76 @@ export default function RentalDetails() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {/* SCHEDULED Rental - Show Workflow Steps */}
-          {isScheduled && !rental.contract_signed && !rental.signature_url && (
-            <div className="border-2 border-yellow-200 rounded-lg p-4 sm:p-6 bg-gradient-to-br from-yellow-50 to-white">
-              <div className="mb-4">
-                <h3 className="text-base sm:text-lg font-semibold text-gray-800 mb-2">
-                  Ready to Start Rental
+          {/* Rental Timer Section - Shows after contract is signed */}
+          {(rental.contract_signed || rental.signature_url) && !isCompleted && (
+            <div className="border-2 border-gray-200 rounded-lg p-4 sm:p-6 bg-gradient-to-br from-gray-50 to-white">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 gap-2">
+                <h3 className="text-base sm:text-lg font-semibold text-gray-800 flex items-center gap-2">
+                  <Clock className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600 flex-shrink-0" />
+                  <span>Rental Timer</span>
                 </h3>
-                <p className="text-sm text-gray-600">Complete these steps to begin the rental:</p>
+                {isActive && (
+                  <Badge className="bg-green-100 text-green-800 px-3 py-1 self-start sm:self-auto">
+                    <div className="flex items-center gap-1">
+                      <div className="w-2 h-2 bg-green-600 rounded-full animate-pulse"></div>
+                      Active
+                    </div>
+                  </Badge>
+                )}
               </div>
 
-              <div className="space-y-4">
-                {/* Step 1: Payment */}
-                <div className={`flex items-start gap-3 p-3 rounded-lg ${isPaymentSufficient() ? 'bg-green-50 border border-green-200' : 'bg-gray-50 border border-gray-200'}`}>
-                  <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${isPaymentSufficient() ? 'bg-green-500' : 'bg-gray-300'}`}>
-                    {isPaymentSufficient() ? (
-                      <CheckCircle className="w-5 h-5 text-white" />
-                    ) : (
-                      <span className="text-white font-bold">1</span>
-                    )}
+              {!isActive ? (
+                // Before starting - Show Start Now button
+                <div className="text-center py-6 sm:py-8">
+                  <div className="mb-4 sm:mb-6">
+                    <p className="text-sm sm:text-base text-gray-600 mb-2">Contract signed and ready to start</p>
+                    <p className="text-xs sm:text-sm text-gray-500">Click "Start Now" to begin the rental timer</p>
                   </div>
-                  <div className="flex-1">
-                    <h4 className="font-semibold text-sm sm:text-base">Payment Complete</h4>
-                    <p className="text-xs sm:text-sm text-gray-600 mt-1">
-                      {isPaymentSufficient() ? '✓ Payment received' : 'Waiting for payment confirmation'}
+                  <Button 
+                    onClick={startRental} 
+                    disabled={!canStartRental}
+                    className={`${!canStartRental ? 'bg-gray-300 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'} text-white px-6 sm:px-8 py-4 sm:py-6 text-base sm:text-lg font-semibold shadow-lg transition-all duration-200 hover:scale-105`}
+                  >
+                    <PlayCircle className="w-5 h-5 sm:w-6 sm:h-6 mr-2" />
+                    Start Now
+                  </Button>
+                  {!canStartRental && (
+                    <p className="text-xs text-red-500 mt-3">
+                      {!isPaymentSufficient() ? 'Payment required' : !hasOpeningVideo ? 'Opening video required' : 'Requirements not met'}
                     </p>
-                  </div>
+                  )}
                 </div>
-
-                {/* Step 2: Upload Opening Video */}
-                <div className={`flex items-start gap-3 p-3 rounded-lg ${hasOpeningVideo ? 'bg-green-50 border border-green-200' : 'bg-gray-50 border border-gray-200'}`}>
-                  <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${hasOpeningVideo ? 'bg-green-500' : 'bg-gray-300'}`}>
-                    {hasOpeningVideo ? (
-                      <CheckCircle className="w-5 h-5 text-white" />
-                    ) : (
-                      <span className="text-white font-bold">2</span>
-                    )}
+              ) : (
+                // After starting - Show elapsed time and End Now button
+                <div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 mb-4 sm:mb-6">
+                    <div className="bg-white rounded-lg p-3 sm:p-4 shadow-sm border border-gray-200">
+                      <div className="flex items-center gap-2 mb-2">
+                        <PlayCircle className="w-3 h-3 sm:w-4 sm:h-4 text-green-600 flex-shrink-0" />
+                        <p className="text-xs sm:text-sm text-gray-600 font-medium">Time Elapsed</p>
+                      </div>
+                      <p className="text-2xl sm:text-3xl font-bold text-green-600 break-all">{elapsedTime || '00:00:00'}</p>
+                    </div>
+                    <div className="bg-white rounded-lg p-3 sm:p-4 shadow-sm border border-gray-200">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Clock className="w-3 h-3 sm:w-4 sm:h-4 text-blue-600 flex-shrink-0" />
+                        <p className="text-xs sm:text-sm text-gray-600 font-medium">Time Remaining</p>
+                      </div>
+                      <p className="text-2xl sm:text-3xl font-bold text-blue-600 break-all">{timeRemaining || 'N/A'}</p>
+                    </div>
                   </div>
-                  <div className="flex-1">
-                    <h4 className="font-semibold text-sm sm:text-base">Vehicle Condition Video</h4>
-                    <p className="text-xs sm:text-sm text-gray-600 mt-1">
-                      {hasOpeningVideo ? '✓ Opening video uploaded' : 'Record vehicle condition before handover'}
-                    </p>
-                    {!hasOpeningVideo && (
-                      <Button 
-                        onClick={() => setOpeningModalOpen(true)}
-                        size="sm"
-                        className="mt-2 bg-blue-600 hover:bg-blue-700 text-white"
-                      >
-                        <Video className="w-4 h-4 mr-2" />
-                        Upload Video
-                      </Button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Step 3: Sign Contract */}
-                <div className={`flex items-start gap-3 p-3 rounded-lg ${(rental.contract_signed || rental.signature_url) ? 'bg-green-50 border border-green-200' : 'bg-gray-50 border border-gray-200'}`}>
-                  <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${(rental.contract_signed || rental.signature_url) ? 'bg-green-500' : 'bg-gray-300'}`}>
-                    {(rental.contract_signed || rental.signature_url) ? (
-                      <CheckCircle className="w-5 h-5 text-white" />
-                    ) : (
-                      <span className="text-white font-bold">3</span>
-                    )}
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="font-semibold text-sm sm:text-base">Contract Signature</h4>
-                    <p className="text-xs sm:text-sm text-gray-600 mt-1">
-                      {(rental.contract_signed || rental.signature_url) ? '✓ Contract signed' : 'Customer signature required'}
-                    </p>
-                    {!rental.contract_signed && !rental.signature_url && (
-                      <Button 
-                        onClick={() => setIsSigning(true)}
-                        disabled={!hasOpeningVideo}
-                        size="sm"
-                        className="mt-2"
-                        title={!hasOpeningVideo ? "Please upload opening video first" : "Sign contract"}
-                      >
-                        <FileSignature className="w-4 h-4 mr-2" />
-                        Sign Contract
-                      </Button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Start Rental Button */}
-                {isPaymentSufficient() && hasOpeningVideo && (rental.contract_signed || rental.signature_url) && (
-                  <div className="pt-4 text-center">
+                  
+                  <div className="flex justify-center">
                     <Button 
-                      onClick={startRental}
-                      className="bg-green-600 hover:bg-green-700 text-white px-8 py-6 text-lg font-semibold shadow-lg"
+                      onClick={completeRental}
+                      className="bg-blue-600 hover:bg-blue-700 text-white px-6 sm:px-8 py-4 sm:py-6 text-base sm:text-lg font-semibold shadow-lg transition-all duration-200 hover:scale-105 w-full sm:w-auto"
                     >
-                      <PlayCircle className="w-6 h-6 mr-2" />
-                      Start Rental Now
+                      <StopCircle className="w-5 h-5 sm:w-6 sm:h-6 mr-2" />
+                      End Now
                     </Button>
                   </div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Contract Signed but Not Started - Show Start Button */}
-          {(rental.contract_signed || rental.signature_url) && !isCompleted && !isActive && (
-            <div className="border-2 border-gray-200 rounded-lg p-4 sm:p-6 bg-gradient-to-br from-gray-50 to-white">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 gap-2">
-                <h3 className="text-base sm:text-lg font-semibold text-gray-800 flex items-center gap-2">
-                  <Clock className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600 flex-shrink-0" />
-                  <span>Rental Timer</span>
-                </h3>
-              </div>
-
-              <div className="text-center py-6 sm:py-8">
-                <div className="mb-4 sm:mb-6">
-                  <p className="text-sm sm:text-base text-gray-600 mb-2">Contract signed and ready to start</p>
-                  <p className="text-xs sm:text-sm text-gray-500">Click "Start Now" to begin the rental timer</p>
                 </div>
-                <Button 
-                  onClick={startRental} 
-                  disabled={!canStartRental}
-                  className={`${!canStartRental ? 'bg-gray-300 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700'} text-white px-6 sm:px-8 py-4 sm:py-6 text-base sm:text-lg font-semibold shadow-lg transition-all duration-200 hover:scale-105`}
-                >
-                  <PlayCircle className="w-5 h-5 sm:w-6 sm:h-6 mr-2" />
-                  Start Now
-                </Button>
-                {!canStartRental && (
-                  <p className="text-xs text-red-500 mt-3">
-                    {!isPaymentSufficient() ? 'Payment required' : !hasOpeningVideo ? 'Opening video required' : 'Requirements not met'}
-                  </p>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Active Rental - Show Timer */}
-          {isActive && (
-            <div className="border-2 border-gray-200 rounded-lg p-4 sm:p-6 bg-gradient-to-br from-gray-50 to-white">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-4 gap-2">
-                <h3 className="text-base sm:text-lg font-semibold text-gray-800 flex items-center gap-2">
-                  <Clock className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600 flex-shrink-0" />
-                  <span>Rental Timer</span>
-                </h3>
-                <Badge className="bg-green-100 text-green-800 px-3 py-1 self-start sm:self-auto">
-                  <div className="flex items-center gap-1">
-                    <div className="w-2 h-2 bg-green-600 rounded-full animate-pulse"></div>
-                    Active
-                  </div>
-                </Badge>
-              </div>
-
-              <div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 mb-4 sm:mb-6">
-                  <div className="bg-white rounded-lg p-3 sm:p-4 shadow-sm border border-gray-200">
-                    <div className="flex items-center gap-2 mb-2">
-                      <PlayCircle className="w-3 h-3 sm:w-4 sm:h-4 text-green-600 flex-shrink-0" />
-                      <p className="text-xs sm:text-sm text-gray-600 font-medium">Time Elapsed</p>
-                    </div>
-                    <p className="text-2xl sm:text-3xl font-bold text-green-600 break-all">{elapsedTime || '00:00:00'}</p>
-                  </div>
-                  <div className="bg-white rounded-lg p-3 sm:p-4 shadow-sm border border-gray-200">
-                    <div className="flex items-center gap-2 mb-2">
-                      <Clock className="w-3 h-3 sm:w-4 sm:h-4 text-blue-600 flex-shrink-0" />
-                      <p className="text-xs sm:text-sm text-gray-600 font-medium">Time Remaining</p>
-                    </div>
-                    <p className={`text-2xl sm:text-3xl font-bold break-all ${timeRemaining === 'Expired' ? 'text-red-600' : 'text-blue-600'}`}>
-                      {timeRemaining || 'N/A'}
-                    </p>
-                  </div>
-                </div>
-                
-                <div className="flex flex-col sm:flex-row justify-center gap-3">
-                  <Button 
-                    onClick={completeRental}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-6 sm:px-8 py-4 sm:py-6 text-base sm:text-lg font-semibold shadow-lg transition-all duration-200 hover:scale-105"
-                  >
-                    <StopCircle className="w-5 h-5 sm:w-6 sm:h-6 mr-2" />
-                    End Now
-                  </Button>
-                  
-                  <Button 
-                    onClick={() => setExtensionModalOpen(true)}
-                    className="bg-purple-600 hover:bg-purple-700 text-white px-6 sm:px-8 py-4 sm:py-6 text-base sm:text-lg font-semibold shadow-lg transition-all duration-200 hover:scale-105"
-                  >
-                    <Clock className="w-5 h-5 sm:w-6 sm:h-6 mr-2" />
-                    Extend Time
-                  </Button>
-                </div>
-              </div>
+              )}
             </div>
           )}
         </CardContent>
@@ -1326,18 +1056,6 @@ export default function RentalDetails() {
             rental={rental} 
             onUpdate={handleVideoUpdate} 
             isProcessing={isProcessingVideo} 
-          />
-        </div>
-      )}
-
-      {/* Extension History Section */}
-      {extensions.length > 0 && (
-        <div className="mb-6">
-          <ExtensionHistory 
-            extensions={extensions}
-            onApprove={handleApproveExtension}
-            onReject={handleRejectExtension}
-            isAdmin={isAdmin}
           />
         </div>
       )}
@@ -1404,6 +1122,7 @@ export default function RentalDetails() {
           <div>
             <h3 className="font-semibold mb-3 text-lg">Financial Information</h3>
             
+            {/* Pending Approval Alert */}
             {isPendingApproval && (
               <Alert className="mb-4 bg-yellow-50 border-yellow-200">
                 <AlertTriangle className="h-4 w-4 text-yellow-600" />
@@ -1417,6 +1136,7 @@ export default function RentalDetails() {
               </Alert>
             )}
 
+            {/* Admin Approval Actions */}
             {isPendingApproval && isAdmin && (
               <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
                 <h4 className="font-semibold text-blue-900 mb-3">Price Approval Required</h4>
@@ -1448,49 +1168,26 @@ export default function RentalDetails() {
               </div>
             )}
 
+            {/* Price Display/Edit */}
             {!isEditingPrice ? (
-              <div className="space-y-2 text-sm sm:text-base">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Base Rental Amount:</span>
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{formatCurrency(rental.total_amount)} MAD</span>
-                    {!isPendingApproval && (
-                      <Button 
-                        onClick={handleEditPrice}
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 w-6 p-0"
-                        title="Edit price"
-                      >
-                        <Edit className="w-3 h-3" />
-                      </Button>
-                    )}
-                  </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-sm sm:text-base">
+                <div className="flex items-center gap-2">
+                  <p><strong>Total Amount:</strong> {rental.total_amount} MAD</p>
+                  {!isPendingApproval && (
+                    <Button 
+                      onClick={handleEditPrice}
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 w-6 p-0"
+                      title="Edit price"
+                    >
+                      <Edit className="w-3 h-3" />
+                    </Button>
+                  )}
                 </div>
-                {rental.total_extension_price > 0 && (
-                  <div className="flex justify-between text-purple-600">
-                    <span className="font-medium">Extension Fees ({rental.total_extended_hours || 0}h):</span>
-                    <span className="font-bold">+{formatCurrency(rental.total_extension_price)} MAD</span>
-                  </div>
-                )}
-                <div className="flex justify-between pt-2 border-t-2 border-gray-300 text-lg">
-                  <span className="font-bold text-gray-900">Grand Total:</span>
-                  <span className="font-bold text-green-600">
-                    {formatCurrency((rental.total_amount || 0) + (rental.total_extension_price || 0))} MAD
-                  </span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Deposit Amount:</span>
-                  <span className="font-medium">{rental.deposit_amount || 0} MAD</span>
-                </div>
-                <div className="flex justify-between font-bold text-red-600">
-                  <span>Remaining Due:</span>
-                  <span>{rental.remaining_amount || 0} MAD</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Damage Deposit:</span>
-                  <span className="font-medium">{rental.damage_deposit || 0} MAD</span>
-                </div>
+                <p><strong>Deposit Amount:</strong> {rental.deposit_amount || 0} MAD</p>
+                <p className="font-bold text-red-600"><strong>Remaining Due:</strong> {rental.remaining_amount || 0} MAD</p>
+                <p><strong>Damage Deposit:</strong> {rental.damage_deposit || 0} MAD</p>
               </div>
             ) : (
               <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg space-y-3">
@@ -1551,118 +1248,6 @@ export default function RentalDetails() {
               </div>
             )}
 
-            {rental.extension_count > 0 && (
-              <>
-                <Separator className="my-4" />
-                <div>
-                  <h4 className="font-semibold mb-3">Extension Information</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                    <p><strong>Total Extensions:</strong> {rental.extension_count}</p>
-                    <p><strong>Extended Hours:</strong> {rental.total_extended_hours || 0}h</p>
-                    <p><strong>Extension Fees:</strong> {formatCurrency(rental.total_extension_price || 0)} MAD</p>
-                    {rental.original_end_date && (
-                      <p><strong>Original End Date:</strong> {new Date(rental.original_end_date).toLocaleString()}</p>
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
-
-            {/* Late Fee Warning */}
-            {lateFee?.is_late && (
-              <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-lg">
-                <h3 className="font-bold text-red-800 mb-2">⚠️ Late Return Fee</h3>
-                <p className="text-red-700">
-                  Customer returned {Math.floor(lateFee.late_minutes / 60)} hours late.
-                  Late fee: <strong>{lateFee.late_fee} MAD</strong>
-                </p>
-                <p className="text-sm text-red-600 mt-1">
-                  New total: {rental.total_amount + lateFee.late_fee} MAD
-                </p>
-              </div>
-            )}
-
-            {/* Damage Deposit Return Section - Show after rental completed */}
-            {rental?.rental_status === 'completed' && rental?.damage_deposit > 0 && (
-              <div className="mt-4 p-4 border-t border-gray-200">
-                <h4 className="text-lg font-semibold mb-3 text-gray-800">💰 Damage Deposit Return</h4>
-                
-                {(() => {
-                  const depositCalc = calculateDepositReturn();
-                  const isDepositReturned = !!rental.deposit_returned_at;
-                  
-                  return (
-                    <div className="space-y-3">
-                      {/* Deposit Breakdown */}
-                      <div className="bg-blue-50 p-3 rounded-lg space-y-2">
-                        <div className="flex justify-between text-sm">
-                          <span className="text-gray-700">Original Damage Deposit:</span>
-                          <span className="font-semibold">{depositCalc.damageDeposit.toFixed(2)} MAD</span>
-                        </div>
-                        
-                        {depositCalc.deductionApplied && (
-                          <div className="flex justify-between text-sm text-red-600">
-                            <span>Less: Unpaid Amount:</span>
-                            <span className="font-semibold">-{depositCalc.unpaidAmount.toFixed(2)} MAD</span>
-                          </div>
-                        )}
-                        
-                        <div className="flex justify-between text-base font-bold border-t border-blue-200 pt-2">
-                          <span className="text-gray-800">Amount to Return:</span>
-                          <span className="text-green-600">{depositCalc.returnAmount.toFixed(2)} MAD</span>
-                        </div>
-                      </div>
-
-                      {/* Signature Section */}
-                      {!isDepositReturned ? (
-                        <div className="flex items-center gap-3">
-                          <button
-                            onClick={() => setShowDepositSignatureModal(true)}
-                            className="flex-1 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-                            disabled={depositCalc.returnAmount <= 0}
-                          >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                            </svg>
-                            Sign Here - Confirm Deposit Received
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="bg-green-50 border border-green-200 p-3 rounded-lg">
-                          <div className="flex items-center gap-2 text-green-700 mb-2">
-                            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                            </svg>
-                            <span className="font-semibold">Deposit Returned</span>
-                          </div>
-                          <div className="text-sm text-gray-700 space-y-1">
-                            <p><strong>Amount:</strong> {rental.deposit_return_amount?.toFixed(2)} MAD</p>
-                            <p><strong>Date:</strong> {new Date(rental.deposit_returned_at).toLocaleString()}</p>
-                          </div>
-                          {rental.deposit_return_signature_url && (
-                            <div className="mt-2">
-                              <p className="text-sm font-medium text-gray-700 mb-1">Customer Signature:</p>
-                              <img 
-                                src={rental.deposit_return_signature_url} 
-                                alt="Deposit Return Signature" 
-                                className="border border-gray-300 rounded max-w-xs h-24 object-contain bg-white"
-                              />
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {depositCalc.returnAmount <= 0 && !isDepositReturned && (
-                        <div className="bg-yellow-50 border border-yellow-200 p-3 rounded-lg text-sm text-yellow-800">
-                          ⚠️ No deposit to return. {depositCalc.deductionApplied ? 'Unpaid amount has been deducted from damage deposit.' : 'Damage deposit was 0.'}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })()}
-              </div>
-            )}
-
             <div className="mt-4 flex flex-wrap items-center gap-4">
                 <strong>Payment Status:</strong> 
                 {getPaymentStatusBadge(rental.payment_status)}
@@ -1710,227 +1295,39 @@ export default function RentalDetails() {
         )}
       </div>
       
-      {/* Enhanced Opening Video Modal */}
       <Dialog open={openingModalOpen} onOpenChange={setOpeningModalOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-lg sm:text-xl">
-              <Video className="w-5 h-5 text-blue-600" />
-              Opening Vehicle Condition
-            </DialogTitle>
-          </DialogHeader>
-          
+        <DialogContent>
+          <DialogHeader><DialogTitle>Opening Vehicle Condition</DialogTitle></DialogHeader>
           <div className="space-y-4">
-            {/* Info Alert */}
-            <Alert className="bg-blue-50 border-blue-200">
-              <Info className="h-4 w-4 text-blue-600" />
-              <AlertDescription className="text-sm text-blue-800">
-                Record a video showing the vehicle's condition before handover. Maximum file size: 50MB.
-              </AlertDescription>
-            </Alert>
-
-            {/* Upload Button */}
-            <Button 
-              onClick={uploadFromGallery} 
-              disabled={isUploading || capturedFiles.length > 0}
-              className="w-full py-3 sm:py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium"
-            >
-              <Upload className="w-5 h-5 mr-2" />
-              {isUploading ? 'Uploading...' : 'Choose Video File'}
-            </Button>
-
-            {/* File List */}
-            {capturedFiles.length > 0 && (
-              <div className="space-y-3">
-                {capturedFiles.map(file => (
-                  <div key={file.id} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
-                    <div className="flex items-start gap-3">
-                      {/* Video Preview */}
-                      <div className="flex-shrink-0">
-                        <div className="w-16 h-16 bg-gray-200 rounded-md overflow-hidden">
-                          <video 
-                            src={file.url} 
-                            className="w-full h-full object-cover"
-                            muted
-                          />
-                        </div>
-                      </div>
-                      
-                      {/* File Info */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-gray-900 truncate">
-                              {file.name}
-                            </p>
-                            <div className="flex items-center gap-2 mt-1">
-                              <FileVideo className="w-3 h-3 text-gray-500 flex-shrink-0" />
-                              <p className="text-xs text-gray-500">
-                                {formatFileSize(file.size)}
-                              </p>
-                            </div>
-                          </div>
-                          
-                          {/* Remove Button */}
-                          <Button 
-                            onClick={() => removeFile(file.id)} 
-                            variant="ghost" 
-                            size="sm"
-                            className="h-8 w-8 p-0 hover:bg-red-100 hover:text-red-600"
-                          >
-                            <X className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+            <Button onClick={uploadFromGallery} disabled={isUploading}><Upload className="w-4 h-4 mr-2" /> Upload Video</Button>
+            {capturedFiles.map(file => (
+              <div key={file.id} className="flex items-center justify-between">
+                <span>{file.name}</span>
+                <Button onClick={() => removeFile(file.id)} variant="ghost" size="sm"><X className="w-4 h-4" /></Button>
               </div>
-            )}
-
-            {/* Action Buttons */}
-            <div className="flex flex-col sm:flex-row gap-2 pt-2">
-              <Button 
-                variant="outline" 
-                onClick={() => {
-                  setOpeningModalOpen(false);
-                  capturedFiles.forEach(file => URL.revokeObjectURL(file.url));
-                  setCapturedFiles([]);
-                }}
-                className="w-full sm:w-auto order-2 sm:order-1"
-              >
-                Cancel
-              </Button>
-              <Button 
-                onClick={() => saveMedia('opening')} 
-                disabled={isProcessingVideo || capturedFiles.length === 0}
-                className="w-full sm:flex-1 bg-blue-600 hover:bg-blue-700 text-white order-1 sm:order-2 py-3 sm:py-2"
-              >
-                {isProcessingVideo ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle className="w-4 h-4 mr-2" />
-                    Save Video
-                  </>
-                )}
-              </Button>
+            ))}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setOpeningModalOpen(false)}>Cancel</Button>
+              <Button onClick={() => saveMedia('opening')} disabled={isProcessingVideo || capturedFiles.length === 0}>{isProcessingVideo ? 'Saving...' : 'Save'}</Button>
             </div>
           </div>
         </DialogContent>
       </Dialog>
       
-      {/* Enhanced Closing Video Modal */}
       <Dialog open={closingModalOpen} onOpenChange={setClosingModalOpen}>
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-lg sm:text-xl">
-              <Video className="w-5 h-5 text-blue-600" />
-              Closing Vehicle Condition
-            </DialogTitle>
-          </DialogHeader>
-          
+        <DialogContent>
+          <DialogHeader><DialogTitle>Closing Vehicle Condition</DialogTitle></DialogHeader>
           <div className="space-y-4">
-            {/* Info Alert */}
-            <Alert className="bg-blue-50 border-blue-200">
-              <Info className="h-4 w-4 text-blue-600" />
-              <AlertDescription className="text-sm text-blue-800">
-                Record a video showing the vehicle's condition upon return. Maximum file size: 50MB.
-              </AlertDescription>
-            </Alert>
-
-            {/* Upload Button */}
-            <Button 
-              onClick={uploadFromGallery} 
-              disabled={isUploading || capturedFiles.length > 0}
-              className="w-full py-3 sm:py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium"
-            >
-              <Upload className="w-5 h-5 mr-2" />
-              {isUploading ? 'Uploading...' : 'Choose Video File'}
-            </Button>
-
-            {/* File List */}
-            {capturedFiles.length > 0 && (
-              <div className="space-y-3">
-                {capturedFiles.map(file => (
-                  <div key={file.id} className="border border-gray-200 rounded-lg p-3 bg-gray-50">
-                    <div className="flex items-start gap-3">
-                      {/* Video Preview */}
-                      <div className="flex-shrink-0">
-                        <div className="w-16 h-16 bg-gray-200 rounded-md overflow-hidden">
-                          <video 
-                            src={file.url} 
-                            className="w-full h-full object-cover"
-                            muted
-                          />
-                        </div>
-                      </div>
-                      
-                      {/* File Info */}
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1 min-w-0">
-                            <p className="text-sm font-medium text-gray-900 truncate">
-                              {file.name}
-                            </p>
-                            <div className="flex items-center gap-2 mt-1">
-                              <FileVideo className="w-3 h-3 text-gray-500 flex-shrink-0" />
-                              <p className="text-xs text-gray-500">
-                                {formatFileSize(file.size)}
-                              </p>
-                            </div>
-                          </div>
-                          
-                          {/* Remove Button */}
-                          <Button 
-                            onClick={() => removeFile(file.id)} 
-                            variant="ghost" 
-                            size="sm"
-                            className="h-8 w-8 p-0 hover:bg-red-100 hover:text-red-600"
-                          >
-                            <X className="w-4 h-4" />
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+            <Button onClick={uploadFromGallery} disabled={isUploading}><Upload className="w-4 h-4 mr-2" /> Upload Video</Button>
+            {capturedFiles.map(file => (
+              <div key={file.id} className="flex items-center justify-between">
+                <span>{file.name}</span>
+                <Button onClick={() => removeFile(file.id)} variant="ghost" size="sm"><X className="w-4 h-4" /></Button>
               </div>
-            )}
-
-            {/* Action Buttons */}
-            <div className="flex flex-col sm:flex-row gap-2 pt-2">
-              <Button 
-                variant="outline" 
-                onClick={() => {
-                  setClosingModalOpen(false);
-                  capturedFiles.forEach(file => URL.revokeObjectURL(file.url));
-                  setCapturedFiles([]);
-                }}
-                className="w-full sm:w-auto order-2 sm:order-1"
-              >
-                Cancel
-              </Button>
-              <Button 
-                onClick={() => saveMedia('closing')} 
-                disabled={isProcessingVideo || capturedFiles.length === 0}
-                className="w-full sm:flex-1 bg-blue-600 hover:bg-blue-700 text-white order-1 sm:order-2 py-3 sm:py-2"
-              >
-                {isProcessingVideo ? (
-                  <>
-                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                    Saving...
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle className="w-4 h-4 mr-2" />
-                    Save Video
-                  </>
-                )}
-              </Button>
+            ))}
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" onClick={() => setClosingModalOpen(false)}>Cancel</Button>
+              <Button onClick={() => saveMedia('closing')} disabled={isProcessingVideo || capturedFiles.length === 0}>{isProcessingVideo ? 'Saving...' : 'Save'}</Button>
             </div>
           </div>
         </DialogContent>
@@ -1940,15 +1337,6 @@ export default function RentalDetails() {
         isOpen={isSigning}
         onClose={() => setIsSigning(false)}
         onSave={handleSignatureSave}
-      />
-
-      {/* Deposit Return Signature Modal */}
-      <SignaturePadModal
-        isOpen={showDepositSignatureModal}
-        onClose={() => setShowDepositSignatureModal(false)}
-        onSave={handleDepositSignatureSave}
-        title="Customer Signature - Deposit Return Confirmation"
-        description={`I confirm that I have received ${calculateDepositReturn().returnAmount.toFixed(2)} MAD as damage deposit return.`}
       />
 
       <ViewCustomerDetailsDrawer
@@ -1964,15 +1352,6 @@ export default function RentalDetails() {
         rental={rental}
       />
 
-      {/* Extension Request Modal */}
-      <ExtensionRequestModal
-        isOpen={extensionModalOpen}
-        onClose={() => setExtensionModalOpen(false)}
-        rental={rental}
-        onExtensionCreated={handleExtensionCreated}
-        currentUser={currentUser}
-      />
-
       <div style={{ position: 'absolute', left: '-9999px', top: 0 }}>
         <div ref={contractRef}>
             <RentalContract rental={rental} />
@@ -1982,7 +1361,9 @@ export default function RentalDetails() {
         </div>
       </div>
 
+      {/* --- STICKY FOOTER FOR MOBILE --- */}
       <div className="sm:hidden fixed bottom-0 left-0 right-0 bg-white border-t p-2 z-10 flex flex-col gap-2">
+        {/* Action Buttons */}
         <div className="flex justify-center gap-2">
           {isScheduled && (
             <Button onClick={cancelRental} variant="destructive" className="flex-1">
@@ -1995,6 +1376,7 @@ export default function RentalDetails() {
             </Button>
           )}
         </div>
+        {/* Document & Payment Buttons */}
         <div className="flex justify-center gap-2">
           <Button 
             onClick={handlePrintInvoice} 

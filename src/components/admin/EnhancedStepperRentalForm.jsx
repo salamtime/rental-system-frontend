@@ -102,6 +102,7 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
   const [transportFees, setTransportFees] = useState({ pickup_fee: 0, dropoff_fee: 0 });
   const [availabilityStatus, setAvailabilityStatus] = useState('unknown');
   const [autoCalculatedPrice, setAutoCalculatedPrice] = useState(0);
+  const [pricingSource, setPricingSource] = useState('default');
   
   // Customer Data
   const [customers, setCustomers] = useState([]);
@@ -121,7 +122,7 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
       await Promise.all([
         loadCustomers(),
         loadRentals(),
-        loadVehicleModels(),
+        loadAvailableVehiclesWithPrices(),
         loadTransportFees()
       ]);
       
@@ -159,28 +160,71 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     }
   };
 
-  const loadVehicleModels = async () => {
+  const loadAvailableVehiclesWithPrices = async () => {
     try {
-      console.log('🚀 Loading vehicle models and available vehicles only...');
+      console.log('🚀 Loading available vehicles with REAL database prices...');
       
-      const models = await VehicleModelService.getAllVehicleModels();
-      setVehicleModels(models || []);
-      console.log('📋 Loaded vehicle models:', models?.length || 0);
-      
-      const { data: vehicles, error } = await supabase
+      // Step 1: Load basic vehicles
+      const { data: vehicles, error: vError } = await supabase
         .from('saharax_0u4w4d_vehicles')
         .select('*')
         .eq('status', 'available')
-        .order('id');
+        .order('name');
       
-      if (error) {
-        console.error('❌ Error loading vehicles:', error);
-      } else {
-        console.log('✅ Loaded available vehicles:', vehicles?.length || 0);
-        setAvailableVehicles(vehicles || []);
+      if (vError) {
+        console.error('❌ Error loading vehicles:', vError);
+        setAvailableVehicles([]);
+        return;
       }
+      
+      if (!vehicles || vehicles.length === 0) {
+        console.log('⚠️ No available vehicles found');
+        setAvailableVehicles([]);
+        return;
+      }
+      
+      console.log(`✅ Loaded ${vehicles.length} available vehicles`);
+      
+      // Step 2: Enrich each vehicle with pricing data
+      const vehiclesWithPrices = await Promise.all(
+        vehicles.map(async (vehicle) => {
+          if (vehicle.vehicle_model_id) {
+            try {
+              const { data: basePrice, error: pError } = await supabase
+                .from('app_4c3a7a6153_base_prices')
+                .select('hourly_price, daily_price, is_active, vehicle_model_id')
+                .eq('vehicle_model_id', vehicle.vehicle_model_id)
+                .eq('is_active', true)
+                .maybeSingle();
+              
+              if (!pError && basePrice) {
+                return {
+                  ...vehicle,
+                  base_price: [basePrice]
+                };
+              }
+            } catch (err) {
+              console.warn(`⚠️ Error fetching price for vehicle ${vehicle.id}:`, err);
+            }
+          }
+          
+          return {
+            ...vehicle,
+            base_price: []
+          };
+        })
+      );
+      
+      console.log(`✅ Enriched ${vehiclesWithPrices.length} vehicles with pricing info`);
+      setAvailableVehicles(vehiclesWithPrices);
+      
+      // Also load vehicle models for reference
+      const models = await VehicleModelService.getAllVehicleModels();
+      setVehicleModels(models || []);
+      
     } catch (error) {
       console.error('❌ Error loading vehicle data:', error);
+      setAvailableVehicles([]);
     }
   };
 
@@ -188,6 +232,7 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     try {
       const fees = await AppSettingsService.getTransportFees();
       setTransportFees(fees);
+      console.log('✅ Loaded transport fees:', fees);
     } catch (err) {
       console.error('Error loading transport fees:', err);
     }
@@ -195,6 +240,8 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
 
   // ==================== EDIT MODE INITIALIZATION ====================
   const initializeEditData = (data) => {
+    console.log('🔧 Initializing edit mode with data:', data);
+    
     let startTime = '';
     let endTime = '';
     
@@ -215,16 +262,63 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     const cleanStartDate = data.rental_start_date ? data.rental_start_date.split('T')[0] : '';
     const cleanEndDate = data.rental_end_date ? data.rental_end_date.split('T')[0] : '';
     
-    setFormData({
-      ...formData,
-      ...data,
+    setFormData(prev => ({
+      // Customer Info
+      customer_name: data.customer_name || '',
+      customer_email: data.customer_email || '',
+      customer_phone: data.customer_phone || '',
+      customer_id: data.customer_id || null,
+      customer_licence_number: data.customer_licence_number || '',
+      customer_id_number: data.customer_id_number || '',
+      customer_dob: data.customer_dob || '',
+      customer_place_of_birth: data.customer_place_of_birth || '',
+      customer_nationality: data.customer_nationality || '',
+      customer_issue_date: data.customer_issue_date || '',
+      customer_id_image: data.customer_id_image || null,
+      
+      // Vehicle & Dates
+      vehicle_id: data.vehicle_id || '',
+      rental_type: data.rental_type || '',
       rental_start_date: cleanStartDate,
       rental_end_date: cleanEndDate,
       rental_start_time: startTime,
       rental_end_time: endTime,
-    });
+      pickup_location: data.pickup_location || 'Office',
+      dropoff_location: data.dropoff_location || 'Office',
+      pickup_transport: data.pickup_transport || false,
+      dropoff_transport: data.dropoff_transport || false,
+      
+      // Second Driver
+      second_driver_name: data.second_driver_name || '',
+      second_driver_license: data.second_driver_license || '',
+      second_driver_id_image: data.second_driver_id_image || null,
+      
+      // Financial
+      quantity_days: data.quantity_days || 0,
+      unit_price: data.unit_price || 0,
+      transport_fee: data.transport_fee || 0,
+      total_amount: data.total_amount || 0,
+      deposit_amount: data.deposit_amount || 0,
+      damage_deposit: data.damage_deposit || 0,
+      remaining_amount: data.remaining_amount || 0,
+      payment_status: data.payment_status || 'unpaid',
+      
+      // Options
+      rental_status: data.rental_status || 'scheduled',
+      insurance_included: data.insurance_included !== undefined ? data.insurance_included : true,
+      helmet_included: data.helmet_included !== undefined ? data.helmet_included : true,
+      gear_included: data.gear_included || false,
+      contract_signed: data.contract_signed || false,
+      accessories: data.accessories || '',
+      signature_url: data.signature_url || null,
+      
+      // Approval
+      approval_status: data.approval_status || 'auto',
+      pending_total_request: data.pending_total_request || null
+    }));
     
     isProgrammaticChange.current = true;
+    console.log('✅ Edit mode initialization complete');
   };
 
   // ==================== CORE FUNCTIONS ====================
@@ -245,40 +339,111 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     return isNaN(localDate.getTime()) ? null : localDate;
   };
 
-  const getDirectPricing = (vehicleId, rentalType) => {
-    const pricingMap = {
-      '1': { hourly: 400, daily: 1500 },
-      '2': { hourly: 400, daily: 1500 },
-      '3': { hourly: 600, daily: 1800 },
-      '4': { hourly: 600, daily: 1800 },
-      '5': { hourly: 1000, daily: 3800 },
-      '6': { hourly: 1000, daily: 3800 },
-      '7': { hourly: 400, daily: 1500 },
-      '8': { hourly: 600, daily: 1800 },
-      '9': { hourly: 400, daily: 1500 },
-      '10': { hourly: 600, daily: 1800 },
-      '11': { hourly: 1000, daily: 3800 },
-      '12': { hourly: 1000, daily: 3800 },
-      '13': { hourly: 400, daily: 1500 },
-      '14': { hourly: 600, daily: 1800 },
-      '15': { hourly: 1000, daily: 3800 },
-      '23': { hourly: 400, daily: 1500 }
-    };
-
-    const vehiclePricing = pricingMap[vehicleId.toString()];
-    if (!vehiclePricing) {
-      return rentalType === 'hourly' ? 400 : 1500;
+  // 🆕 FIXED: REAL DATABASE PRICING FUNCTION
+  const getRealPricing = async (vehicleId, rentalType) => {
+    console.log('💰 Getting REAL price for vehicle:', vehicleId, rentalType);
+    
+    if (!vehicleId) {
+      const fallbackPrice = rentalType === 'hourly' ? 400 : 1500;
+      console.warn('⚠️ No vehicle ID provided, using fallback:', fallbackPrice);
+      return { price: fallbackPrice, source: 'default' };
     }
-
-    return vehiclePricing[rentalType] || 0;
+    
+    try {
+      const numericId = typeof vehicleId === 'string' ? Number(vehicleId) : vehicleId;
+      
+      // Step 1: Get the vehicle to find its model_id
+      const { data: vehicle, error: vError } = await supabase
+        .from('saharax_0u4w4d_vehicles')
+        .select('id, name, model, vehicle_model_id')
+        .eq('id', numericId)
+        .single();
+      
+      if (vError || !vehicle) {
+        console.error('❌ Vehicle not found:', vError?.message || 'No vehicle data');
+        const fallbackPrice = rentalType === 'hourly' ? 400 : 1500;
+        return { price: fallbackPrice, source: 'default' };
+      }
+      
+      console.log('🚗 Found vehicle:', {
+        id: vehicle.id,
+        name: vehicle.name,
+        model: vehicle.model,
+        vehicle_model_id: vehicle.vehicle_model_id
+      });
+      
+      // Step 2: Check if vehicle has model_id
+      if (!vehicle.vehicle_model_id) {
+        console.warn('⚠️ Vehicle has no model_id assigned');
+        const fallbackPrice = rentalType === 'hourly' ? 400 : 1500;
+        return { price: fallbackPrice, source: 'default' };
+      }
+      
+      // Step 3: Get ACTIVE price for this model
+      const { data: basePrice, error: pError } = await supabase
+        .from('app_4c3a7a6153_base_prices')
+        .select('hourly_price, daily_price, is_active')
+        .eq('vehicle_model_id', vehicle.vehicle_model_id)
+        .eq('is_active', true)
+        .maybeSingle();
+      
+      if (pError) {
+        console.warn('⚠️ Price query failed:', pError.message);
+        const fallbackPrice = rentalType === 'hourly' ? 400 : 1500;
+        return { price: fallbackPrice, source: 'default' };
+      }
+      
+      if (!basePrice) {
+        console.warn(`⚠️ No ACTIVE price for model ${vehicle.vehicle_model_id}`);
+        const fallbackPrice = rentalType === 'hourly' ? 400 : 1500;
+        return { price: fallbackPrice, source: 'default' };
+      }
+      
+      // Step 4: Return the correct price
+      const price = rentalType === 'hourly' 
+        ? parseFloat(basePrice.hourly_price) 
+        : parseFloat(basePrice.daily_price);
+      
+      console.log(`✅ Found ACTIVE price: ${price} MAD for ${rentalType}`);
+      return { price, source: 'database' };
+      
+    } catch (error) {
+      console.error('❌ Unexpected error in getRealPricing:', error);
+      const fallbackPrice = rentalType === 'hourly' ? 400 : 1500;
+      return { price: fallbackPrice, source: 'error' };
+    }
   };
 
-  const autoPopulateUnitPrice = () => {
-    if (!formData.vehicle_id || !formData.rental_type) return;
+  const autoPopulateUnitPrice = async () => {
+    if (!formData.vehicle_id || !formData.rental_type) {
+      console.log('⚠️ Cannot auto-populate: missing vehicle_id or rental_type');
+      return;
+    }
     
-    const unitPrice = getDirectPricing(formData.vehicle_id, formData.rental_type);
-    setAutoCalculatedPrice(unitPrice);
-    setFormData(prev => ({ ...prev, unit_price: unitPrice }));
+    console.log('🔄 Auto-populating price for:', {
+      vehicle_id: formData.vehicle_id,
+      rental_type: formData.rental_type
+    });
+    
+    try {
+      const result = await getRealPricing(formData.vehicle_id, formData.rental_type);
+      
+      console.log('💸 Setting unit price to:', result.price);
+      setAutoCalculatedPrice(result.price);
+      setPricingSource(result.source);
+      
+      setFormData(prev => ({ ...prev, unit_price: result.price }));
+      
+      // Show feedback
+      if (result.source === 'database') {
+        toast.success(`✅ Using database pricing: ${result.price} MAD`);
+      } else if (result.source === 'default') {
+        toast.warning('⚠️ Using default pricing (configure in Pricing Management)');
+      }
+    } catch (error) {
+      console.error('❌ Error auto-populating price:', error);
+      toast.error('Failed to load price');
+    }
   };
 
   const calculateTransportFee = () => {
@@ -387,12 +552,10 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     return Array.from(customerMap.values());
   }, [customers, rentals]);
 
-  // 📱 WhatsApp Notification Helper Function
   const sendWhatsAppNotifications = async (pendingTotalRequest, rentalId) => {
     try {
       console.log('📱 WHATSAPP: Fetching admins with WhatsApp enabled...');
       
-      // Fetch admins/owners with WhatsApp notifications enabled
       const { data: admins, error } = await supabase
         .from('app_b30c02e74da644baad4668e3587d86b1_users')
         .select('id, full_name, phone_number, whatsapp_notifications, role')
@@ -412,21 +575,16 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
 
       console.log(`📱 WHATSAPP: Found ${admins.length} admin(s) with WhatsApp enabled:`, admins);
 
-      // Generate WhatsApp URLs and trigger notifications
       let notificationCount = 0;
       
       for (const admin of admins) {
         try {
-          // Clean phone number (remove non-numeric characters except +)
           let cleanPhone = admin.phone_number.replace(/[^\d+]/g, '');
           
-          // Ensure phone starts with country code
           if (!cleanPhone.startsWith('+')) {
-            // Assume Morocco country code if not provided
             cleanPhone = '+212' + cleanPhone.replace(/^0+/, '');
           }
 
-          // Enhanced WhatsApp message with proper encoding
           const messageText = 
             `SAHARAX - Rental Approval Required\n\n` +
             `Price Override Request: ${pendingTotalRequest} MAD\n` +
@@ -439,18 +597,13 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
             `Action Required Within 24 Hours`;
           
           const message = encodeURIComponent(messageText);
-
           const whatsappUrl = `https://wa.me/${cleanPhone}?text=${message}`;
 
           console.log(`📱 WHATSAPP: Opening WhatsApp for ${admin.full_name} (${admin.phone_number})`);
-          console.log(`📱 WHATSAPP: URL: ${whatsappUrl}`);
-
-          // Open WhatsApp in new tab
           window.open(whatsappUrl, '_blank');
           
           notificationCount++;
 
-          // Add small delay between notifications to prevent browser blocking
           if (notificationCount < admins.length) {
             await new Promise(resolve => setTimeout(resolve, 500));
           }
@@ -799,20 +952,17 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
   const handleSubmit = async () => {
     console.log('🔍 handleSubmit (hook) called - successfullySubmitted:', successfullySubmitted);
     
-    // 🔍 DEBUG: Log user profile and role at the start
     console.log('🔍 DEBUG: Checking user profile and role for approval logic:');
     console.log('- userProfile:', userProfile);
     console.log('- userProfile?.role:', userProfile?.role);
     console.log('- Manual price:', parseFloat(formData.unit_price) || 0);
     console.log('- Auto price:', autoCalculatedPrice);
     
-    // CRITICAL: Prevent submission if already submitted
     if (successfullySubmitted) {
       console.log('⚠️ Already successfully submitted, ignoring duplicate request');
       return;
     }
     
-    // CRITICAL: Prevent double submission
     if (isSubmitting) {
       console.log('⚠️ Submission already in progress, ignoring duplicate request');
       return;
@@ -825,7 +975,6 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     try {
       console.log('🔍 DEBUG - Before submission:');
       console.log('vehicle_id:', formData.vehicle_id, 'Type:', typeof formData.vehicle_id);
-      console.log('Should be: Number (e.g., 1, 2, 3, 15, 16)');
       
       const currentTime = new Date().toTimeString().slice(0, 5);
       const submissionReadyFormData = { ...formData };
@@ -918,14 +1067,11 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
 
       console.log('✅ Final submission data - vehicle_id:', submissionData.vehicle_id, 'Type:', typeof submissionData.vehicle_id);
 
-      // 🚨 FIXED GATEKEEPER LOGIC: Enhanced role handling and approval logic
       console.log('🛡️ GATEKEEPER: Checking for price override...');
       
-      // FIXED: Better role handling with fallback
       const userRole = userProfile?.role || 'unknown';
       console.log('🛡️ GATEKEEPER: Current user role from AuthContext:', userRole, 'Full profile:', userProfile);
 
-      // Compare manual price with auto-calculated price
       const manualPrice = parseFloat(submissionData.unit_price) || 0;
       const autoPrice = parseFloat(autoCalculatedPrice) || 0;
       const isPriceOverride = manualPrice !== autoPrice;
@@ -941,19 +1087,16 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
         isAdminOrOwner
       });
 
-      // 🚨 FIXED GATEKEEPER: Apply approval logic with proper handling
       if (isPriceOverride) {
         if (isStaff) {
           console.log('🛡️ GATEKEEPER: Staff price override detected! Setting pending approval status...');
           
-          // Calculate the original total with auto price
           const originalSubtotal = (submissionData.quantity_days || 0) * autoPrice;
           const originalTotal = originalSubtotal + (submissionData.transport_fee || 0);
           
-          // Set approval fields
           submissionData.approval_status = 'pending';
-          submissionData.pending_total_request = submissionData.total_amount; // Store the requested total
-          submissionData.total_amount = originalTotal; // Reset to original auto-calculated price
+          submissionData.pending_total_request = submissionData.total_amount;
+          submissionData.total_amount = originalTotal;
           submissionData.remaining_amount = originalTotal - (submissionData.deposit_amount || 0);
           
           console.log('🛡️ GATEKEEPER: Approval data set for staff:', {
@@ -969,13 +1112,11 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
           submissionData.approval_status = 'approved';
           submissionData.pending_total_request = null;
         } else {
-          // FIXED: Unknown role or other users - require approval
           console.log('🛡️ GATEKEEPER: Unknown user role with price override - requiring approval');
           submissionData.approval_status = 'pending';
           submissionData.pending_total_request = submissionData.total_amount;
         }
       } else {
-        // FIXED: No price override - auto approve
         console.log('🛡️ GATEKEEPER: No price override detected - auto approving');
         submissionData.approval_status = 'auto';
         submissionData.pending_total_request = null;
@@ -992,17 +1133,14 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
       }
       
       if (result && result.success) {
-        // CRITICAL: Mark as successfully submitted IMMEDIATELY
         setSuccessfullySubmitted(true);
         setErrors({});
         
         let successMsg = `✅ Rental successfully ${mode === 'edit' ? 'updated' : 'created'}!`;
         
-        // Add approval status message
         if (submissionData.approval_status === 'pending') {
           successMsg += ' ⏳ Price override submitted for admin approval.';
           
-          // 📱 WHATSAPP NOTIFICATION: Send notifications to admins AFTER rental is created
           console.log('📱 WHATSAPP: Triggering WhatsApp notifications with rental ID:', result.data.id);
           try {
             const notificationCount = await sendWhatsAppNotifications(
@@ -1098,6 +1236,8 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     setAvailabilityStatus('unknown');
     setSelectedQuickDuration(null);
     setSuccessfullySubmitted(false);
+    setAutoCalculatedPrice(0);
+    setPricingSource('default');
   };
 
   // ==================== AUTOMATION HOOKS ====================
@@ -1181,10 +1321,18 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
 
   useEffect(() => {
     if (formData.vehicle_id && formData.rental_type) {
-      autoPopulateUnitPrice();
+      console.log('🎯 Triggering price lookup');
+      
+      // Small delay to ensure state is updated
+      const timer = setTimeout(() => {
+        autoPopulateUnitPrice();
+      }, 100);
+      
+      return () => clearTimeout(timer);
     } else if (!formData.vehicle_id) {
       setFormData(prev => ({ ...prev, unit_price: 0 }));
       setAutoCalculatedPrice(0);
+      setPricingSource('default');
     }
   }, [formData.vehicle_id, formData.rental_type]);
 
@@ -1223,6 +1371,7 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     transportFees,
     availabilityStatus,
     autoCalculatedPrice,
+    pricingSource,
     customers,
     rentals,
     suggestions,
@@ -1250,7 +1399,7 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
   };
 };
 
-// ==================== SIMPLIFIED UI COMPONENTS ====================
+// ==================== UI COMPONENTS ====================
 
 const ProgressStepper = ({ currentStep, steps }) => (
   <div className="mb-8">
@@ -1334,54 +1483,116 @@ const TabbedInterface = ({ tabs, activeTab, onTabChange }) => (
   </div>
 );
 
-const VehicleCardGrid = ({ vehicles, selectedId, onSelect, disabled }) => (
-  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-h-96 overflow-y-auto pr-2">
-    {vehicles.map((vehicle) => {
-      const isSelected = selectedId === vehicle.id || selectedId == vehicle.id;
-      return (
-        <button
-          key={vehicle.id}
-          type="button"
-          onClick={() => {
-            console.log('🚗 Vehicle card clicked:', vehicle.id, vehicle.name);
-            onSelect(vehicle.id);
-          }}
-          disabled={disabled}
-          className={`relative p-4 rounded-lg border-2 transition-all ${
-            isSelected
-              ? 'border-green-500 bg-green-50 ring-4 ring-green-100'
-              : 'border-gray-200 hover:border-gray-300 bg-white'
-          } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-        >
-          <div className="flex items-start gap-3">
-            <div className="p-2 bg-gray-100 rounded">
-              <CarIcon className="w-6 h-6 text-gray-600" />
+const VehicleCardGrid = ({ vehicles, selectedId, onSelect, disabled }) => {
+  // Helper to get price display info
+  const getPriceDisplay = (vehicle) => {
+    if (vehicle.base_price && vehicle.base_price.length > 0) {
+      const bp = vehicle.base_price[0];
+      if (bp.is_active) {
+        return {
+          hourly: bp.hourly_price,
+          daily: bp.daily_price,
+          hasPricing: true,
+          source: 'database'
+        };
+      }
+    }
+    
+    if (vehicle.hourly_price || vehicle.daily_price) {
+      return {
+        hourly: vehicle.hourly_price,
+        daily: vehicle.daily_price,
+        hasPricing: true,
+        source: 'vehicle'
+      };
+    }
+    
+    return { hourly: null, daily: null, hasPricing: false, source: 'none' };
+  };
+  
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-h-96 overflow-y-auto pr-2">
+      {vehicles.map((vehicle) => {
+        const isSelected = selectedId === vehicle.id || selectedId == vehicle.id;
+        const priceInfo = getPriceDisplay(vehicle);
+        
+        return (
+          <button
+            key={vehicle.id}
+            type="button"
+            onClick={() => {
+              console.log('🚗 Vehicle card clicked:', vehicle.id, vehicle.name);
+              console.log('💰 Vehicle pricing:', priceInfo);
+              onSelect(vehicle.id);
+            }}
+            disabled={disabled}
+            className={`relative p-4 rounded-lg border-2 transition-all text-left ${
+              isSelected
+                ? 'border-green-500 bg-green-50 ring-4 ring-green-100'
+                : 'border-gray-200 hover:border-gray-300 bg-white'
+            } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            <div className="flex items-start gap-3">
+              <div className="p-2 bg-gray-100 rounded">
+                <CarIcon className="w-6 h-6 text-gray-600" />
+              </div>
+              <div className="flex-1">
+                <div className="mb-2">
+                  <span className="text-xs text-gray-500">Plate</span>
+                  <div className="text-xl font-bold text-gray-900">
+                    {vehicle.plate_number || vehicle.vehicle_plate_number || 'N/A'}
+                  </div>
+                </div>
+                
+                <h4 className="font-semibold text-gray-900">{vehicle.name}</h4>
+                <p className="text-sm text-gray-600">{vehicle.model || 'No model'}</p>
+                
+                {/* Price Display */}
+                {priceInfo.hasPricing ? (
+                  <div className="mt-2 space-y-1">
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-gray-500">Hourly:</span>
+                      <span className="font-medium text-blue-600">
+                        {priceInfo.hourly?.toFixed(0) || 'N/A'} MAD
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center text-sm">
+                      <span className="text-gray-500">Daily:</span>
+                      <span className="font-medium text-green-600">
+                        {priceInfo.daily?.toFixed(0) || 'N/A'} MAD
+                      </span>
+                    </div>
+                    {priceInfo.source === 'database' && (
+                      <div className="text-xs text-green-600 flex items-center gap-1">
+                        <CheckCircle className="w-3 h-3" />
+                        <span>Live pricing</span>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="mt-2">
+                    <div className="inline-flex items-center gap-1 px-2 py-1 bg-yellow-100 text-yellow-800 rounded text-xs">
+                      <AlertCircle className="w-3 h-3" />
+                      <span>No pricing configured</span>
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-            <div className="text-left flex-1">
-              <div className="mb-2">
-                <span className="text-xs text-gray-500">Plate</span>
-                <div className="text-xl font-bold text-gray-900">
-                  {vehicle.plate_number || 'N/A'}
+            
+            {isSelected && (
+              <div className="absolute top-2 right-2">
+                <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
+                  <Check className="w-4 h-4 text-white" />
                 </div>
               </div>
-              
-              <h4 className="font-semibold text-gray-900">{vehicle.name}</h4>
-              <p className="text-sm text-gray-600">{vehicle.model}</p>
-            </div>
-          </div>
-          
-          {isSelected && (
-            <div className="absolute top-2 right-2">
-              <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
-                <Check className="w-4 h-4 text-white" />
-              </div>
-            </div>
-          )}
-        </button>
-      );
-    })}
-  </div>
-);
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+};
 
 const FileUpload = ({ label, value, onChange, accept = "image/*" }) => {
   const [dragOver, setDragOver] = useState(false);
@@ -1439,7 +1650,7 @@ const FileUpload = ({ label, value, onChange, accept = "image/*" }) => {
   );
 };
 
-const PriceCalculator = ({ formData, onPriceChange }) => {
+const PriceCalculator = ({ formData, onPriceChange, pricingSource, autoCalculatedPrice }) => {
   const [showBreakdown, setShowBreakdown] = useState(false);
   const [isEditingRentalCost, setIsEditingRentalCost] = useState(false);
   const [editedRentalCost, setEditedRentalCost] = useState('');
@@ -1487,22 +1698,60 @@ const PriceCalculator = ({ formData, onPriceChange }) => {
     setEditedRentalCost('');
   };
 
+  const getPricingSourceBadge = () => {
+    switch (pricingSource) {
+      case 'database':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-800 rounded text-xs">
+            <CheckCircle className="w-3 h-3" />
+            Live Database Pricing
+          </span>
+        );
+      case 'default':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-1 bg-yellow-100 text-yellow-800 rounded text-xs">
+            <AlertCircle className="w-3 h-3" />
+            Default Pricing
+          </span>
+        );
+      case 'error':
+        return (
+          <span className="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-800 rounded text-xs">
+            <AlertCircle className="w-3 h-3" />
+            Pricing Error
+          </span>
+        );
+      default:
+        return null;
+    }
+  };
+
   return (
     <div className="bg-gray-50 rounded-lg p-4">
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-semibold text-gray-900">Price Summary</h3>
-        <button
-          type="button"
-          onClick={() => setShowBreakdown(!showBreakdown)}
-          className="text-sm text-blue-600 hover:text-blue-800"
-        >
-          {showBreakdown ? 'Hide Details' : 'Show Details'}
-        </button>
+        <div className="flex items-center gap-2">
+          {getPricingSourceBadge()}
+          <button
+            type="button"
+            onClick={() => setShowBreakdown(!showBreakdown)}
+            className="text-sm text-blue-600 hover:text-blue-800"
+          >
+            {showBreakdown ? 'Hide Details' : 'Show Details'}
+          </button>
+        </div>
       </div>
       
       <div className="space-y-3">
         <div className="flex flex-col gap-2">
-          <span className="text-gray-600 font-medium">Rental Cost:</span>
+          <div className="flex items-center justify-between">
+            <span className="text-gray-600 font-medium">Rental Cost:</span>
+            {formData.unit_price !== autoCalculatedPrice && (
+              <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                Manual override
+              </span>
+            )}
+          </div>
           {isEditingRentalCost ? (
             <div className="flex flex-col gap-3 w-full">
               <div className="relative">
@@ -1585,7 +1834,11 @@ const PriceCalculator = ({ formData, onPriceChange }) => {
       </div>
       
       <div className="mt-3 p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-700">
-        💡 <strong>Tip:</strong> Click the edit icon to manually adjust the rental cost. Changes will trigger approval for staff users.
+        {pricingSource === 'database' ? (
+          <>💡 <strong>Using live database pricing.</strong> Edit button allows manual override (requires approval for staff).</>
+        ) : (
+          <>⚠️ <strong>Using default pricing.</strong> Configure vehicle prices in Pricing Management.</>
+        )}
       </div>
     </div>
   );
@@ -1621,6 +1874,7 @@ const SimplifiedRentalWizard = ({
     transportFees,
     availabilityStatus,
     autoCalculatedPrice,
+    pricingSource,
     suggestions,
     selectedQuickDuration,
     
@@ -1645,8 +1899,7 @@ const SimplifiedRentalWizard = ({
   ];
 
   const getSelectedVehicle = () => {
-    return availableVehicles.find(v => v.id == formData.vehicle_id) || 
-           vehicleModels.find(v => v.id == formData.vehicle_id);
+    return availableVehicles.find(v => v.id == formData.vehicle_id);
   };
 
   const formatPeriodDisplay = () => {
@@ -2058,22 +2311,32 @@ const SimplifiedRentalWizard = ({
 
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-3">
-                          Select Vehicle * ({availableVehicles.length > 0 ? availableVehicles.length : vehicleModels.length} available)
+                          Select Vehicle * ({availableVehicles.length} available)
                         </label>
-                        <VehicleCardGrid
-                          vehicles={availableVehicles.length > 0 ? availableVehicles : vehicleModels}
-                          selectedId={formData.vehicle_id}
-                          onSelect={(vehicleId) => {
-                            console.log('🚗 Vehicle selected:', vehicleId, 'Type:', typeof vehicleId);
-                            const numericId = Number(vehicleId);
-                            if (!isNaN(numericId)) {
-                              handleInputChange('vehicle_id', numericId);
-                            } else {
-                              console.error('Invalid vehicle ID:', vehicleId);
-                            }
-                          }}
-                          disabled={loading || successfullySubmitted}
-                        />
+                        {availableVehicles.length === 0 ? (
+                          <div className="text-center py-8 bg-gray-50 rounded-lg border border-gray-200">
+                            <CarIcon className="w-12 h-12 text-gray-300 mx-auto mb-3" />
+                            <p className="text-gray-500">No available vehicles found</p>
+                            <p className="text-sm text-gray-400 mt-1">
+                              Check vehicle status or configure pricing in Pricing Management
+                            </p>
+                          </div>
+                        ) : (
+                          <VehicleCardGrid
+                            vehicles={availableVehicles}
+                            selectedId={formData.vehicle_id}
+                            onSelect={(vehicleId) => {
+                              console.log('🚗 Vehicle selected:', vehicleId, 'Type:', typeof vehicleId);
+                              const numericId = Number(vehicleId);
+                              if (!isNaN(numericId)) {
+                                handleInputChange('vehicle_id', numericId);
+                              } else {
+                                console.error('Invalid vehicle ID:', vehicleId);
+                              }
+                            }}
+                            disabled={loading || successfullySubmitted}
+                          />
+                        )}
                         {errors.vehicle_id && (
                           <p className="text-red-500 text-xs mt-1">{errors.vehicle_id}</p>
                         )}
@@ -2256,7 +2519,7 @@ const SimplifiedRentalWizard = ({
                               {(() => {
                                 const vehicle = getSelectedVehicle();
                                 if (!vehicle) return 'Not selected';
-                                return `${vehicle.plate_number || 'N/A'} - ${vehicle.model || vehicle.name}`;
+                                return `${vehicle.plate_number || vehicle.vehicle_plate_number || 'N/A'} - ${vehicle.model || vehicle.name}`;
                               })()}
                             </span>
                           </div>
@@ -2270,10 +2533,19 @@ const SimplifiedRentalWizard = ({
                             <span className="text-gray-600">Type:</span>
                             <span className="font-medium capitalize">{formData.rental_type}</span>
                           </div>
+                          <div className="flex justify-between">
+                            <span className="text-gray-600">Days/Hours:</span>
+                            <span className="font-medium">{formData.quantity_days}</span>
+                          </div>
                         </div>
                       </div>
 
-                      <PriceCalculator formData={formData} onPriceChange={handleInputChange} />
+                      <PriceCalculator 
+                        formData={formData} 
+                        onPriceChange={handleInputChange}
+                        pricingSource={pricingSource}
+                        autoCalculatedPrice={autoCalculatedPrice}
+                      />
 
                       <div className="space-y-4">
                         <h3 className="font-semibold text-gray-900">Payment Details</h3>

@@ -7,7 +7,7 @@ import { Plus, Edit, Trash2, DollarSign, Save, X, Car, Clock, Calendar, Calendar
 /**
  * EnhancedBasePriceEditor - Base price management using separate base_prices table
  * 
- * Works with the app_8be2ccb1f0_base_prices table for proper pricing management
+ * Works with the app_4c3a7a6153_base_prices table for proper pricing management
  * FIXED: Daily prices now display as fixed amounts, not multipliers of hourly
  */
 const EnhancedBasePriceEditor = ({ onUpdate }) => {

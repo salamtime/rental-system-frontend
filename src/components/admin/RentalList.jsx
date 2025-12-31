@@ -48,6 +48,7 @@ const formatRentalId = (id) => {
     return `RNT-${year}-${idSnippet}`;
 };
 
+
 export default function RentalList() {
   const [rentals, setRentals] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -71,6 +72,8 @@ export default function RentalList() {
             total_amount: total_cost,
             rental_status: status,
             payment_status,
+            deposit_amount,
+            deposit_returned_at,
             approval_status,
             pending_total_request,
             vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(id, name, plate_number)
@@ -131,23 +134,44 @@ export default function RentalList() {
     }
   };
 
+  // ✅ FIXED: Get display status - prioritize payment_status, fallback to rental_status
+  const getDisplayStatus = (rental) => {
+    // Priority 1: Use payment_status if it exists and is meaningful
+    if (rental.payment_status && rental.payment_status !== 'unknown') {
+      return rental.payment_status;
+    }
+    
+    // Priority 2: Use rental_status if it exists
+    if (rental.rental_status) {
+      return rental.rental_status;
+    }
+    
+    // Priority 3: Default to 'pending' only if both are null/empty
+    return 'pending';
+  };
+
   const getStatusVariant = (status) => {
     switch (status?.toLowerCase()) {
       case "active":
       case "confirmed":
+      case "paid":
         return "default";
       case "completed":
+      case "partial":
         return "secondary";
       case "cancelled":
+      case "unpaid":
+      case "overdue":
         return "destructive";
       case "scheduled":
+      case "pending":
         return "outline";
       default:
         return "outline";
     }
   };
   
-    const getPaymentStatusVariant = (status) => {
+  const getPaymentStatusVariant = (status) => {
     switch (status?.toLowerCase()) {
       case "paid":
         return "default";
@@ -181,65 +205,68 @@ export default function RentalList() {
         </TableHeader>
         <TableBody>
           {rentals.length > 0 ? (
-            rentals.map((rental) => (
-              <TableRow key={rental.id}>
-                <TableCell>{formatRentalId(rental.id)}</TableCell>
-                <TableCell>
-                  <div className="font-medium">{rental.customer_name || 'N/A'}</div>
-                  <Link to="#" className="text-sm text-muted-foreground hover:underline">View Customer Details</Link>
-                </TableCell>
-                <TableCell>
-                  <div className="font-medium">{rental.vehicle?.name || "N/A"}</div>
-                  <div className="text-sm text-muted-foreground">ID: {rental.vehicle?.id || "N/A"}</div>
-                </TableCell>
-                <TableCell>{rental.vehicle?.plate_number || "N/A"}</TableCell>
-                <TableCell>{formatRentalPeriod(rental)}</TableCell>
-                <TableCell>
-                  <Badge variant={getStatusVariant(rental.rental_status)}>
-                    {rental.rental_status || "Unknown"}
-                  </Badge>
-                </TableCell>
-                 <TableCell>
-                  <Badge variant={getPaymentStatusVariant(rental.payment_status)}>
-                    {rental.payment_status || "Unknown"}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex items-center justify-end gap-2">
-                    <span>{rental.total_amount?.toFixed(2) || "0.00"} MAD</span>
-                    {rental.approval_status === 'pending' && rental.pending_total_request && (
-                      <Badge 
-                        variant="outline" 
-                        className="bg-yellow-50 text-yellow-700 border-yellow-300 text-xs flex items-center gap-1"
-                      >
-                        <Clock className="w-3 h-3" />
-                        Pending
-                      </Badge>
-                    )}
-                  </div>
-                </TableCell>
-                <TableCell className="text-right">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem>Details</DropdownMenuItem>
-                      <DropdownMenuItem>Edit</DropdownMenuItem>
-                      <DropdownMenuItem>Close</DropdownMenuItem>
-                      {canDelete() && (
-                        <DropdownMenuItem 
-                          className="text-red-600 focus:text-red-600"
-                          onClick={() => handleDelete(rental.id)}
+            rentals.map((rental) => {
+              const displayStatus = getDisplayStatus(rental);
+              return (
+                <TableRow key={rental.id}>
+                  <TableCell>{formatRentalId(rental.id)}</TableCell>
+                  <TableCell>
+                    <div className="font-medium">{rental.customer_name || 'N/A'}</div>
+                    <Link to="#" className="text-sm text-muted-foreground hover:underline">View Customer Details</Link>
+                  </TableCell>
+                  <TableCell>
+                    <div className="font-medium">{rental.vehicle?.name || "N/A"}</div>
+                    <div className="text-sm text-muted-foreground">ID: {rental.vehicle?.id || "N/A"}</div>
+                  </TableCell>
+                  <TableCell>{rental.vehicle?.plate_number || "N/A"}</TableCell>
+                  <TableCell>{formatRentalPeriod(rental)}</TableCell>
+                  <TableCell>
+                    <Badge variant={getStatusVariant(displayStatus)}>
+                      {displayStatus}
+                    </Badge>
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={getPaymentStatusVariant(rental.payment_status)}>
+                      {rental.payment_status || "Unknown"}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <span>{rental.total_amount?.toFixed(2) || "0.00"} MAD</span>
+                      {rental.approval_status === 'pending' && rental.pending_total_request && (
+                        <Badge 
+                          variant="outline" 
+                          className="bg-yellow-50 text-yellow-700 border-yellow-300 text-xs flex items-center gap-1"
                         >
-                          Delete
-                        </DropdownMenuItem>
+                          <Clock className="w-3 h-3" />
+                          Pending
+                        </Badge>
                       )}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </TableCell>
-              </TableRow>
-            ))
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem>Details</DropdownMenuItem>
+                        <DropdownMenuItem>Edit</DropdownMenuItem>
+                        <DropdownMenuItem>Close</DropdownMenuItem>
+                        {canDelete() && (
+                          <DropdownMenuItem 
+                            className="text-red-600 focus:text-red-600"
+                            onClick={() => handleDelete(rental.id)}
+                          >
+                            Delete
+                          </DropdownMenuItem>
+                        )}
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </TableCell>
+                </TableRow>
+              );
+            })
           ) : (
             <TableRow>
               <TableCell colSpan="9" className="text-center">No rentals found.</TableCell>

@@ -9,7 +9,6 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Alert, AlertDescription } from '../../components/ui/alert';
 import RentalVideos from '../../components/RentalVideos';
 import ViewCustomerDetailsDrawer from '../../components/admin/ViewCustomerDetailsDrawer';
-import { useTimer } from '../../hooks/useTimer';
 import RentalContract from '../../components/admin/RentalContract';
 import SignaturePadModal from '../../components/SignaturePadModal';
 import SecondDriverDetailsModal from '../../components/admin/SecondDriverDetailsModal';
@@ -165,7 +164,7 @@ export default function RentalDetails() {
         
         if (user) {
           const { data: userProfile, error } = await supabase
-            .from('app_b30c02e74da644baad4668e3587d86b1_users')
+            .from('app_4c3a7a6153_users')
             .select('role, full_name')
             .eq('id', user.id)
             .single();
@@ -673,15 +672,13 @@ export default function RentalDetails() {
       loadRental();
     }
   }, [id]);
-  // Use shared timer hook for real-time updates
-  const currentTime = useTimer();
 
   // Calculate time remaining
   useEffect(() => {
     if (!rental?.rental_start_date || !rental?.rental_end_date) return;
 
     const calculateTimeRemaining = () => {
-      const now = new Date(currentTime);
+      const now = new Date();
       
       const plannedStart = new Date(rental.rental_start_date);
       const plannedEnd = new Date(rental.rental_end_date);
@@ -714,7 +711,9 @@ export default function RentalDetails() {
     };
 
     calculateTimeRemaining();
-  }, [rental?.rental_start_date, rental?.rental_end_date, rental?.started_at, rental?.rental_status, currentTime]);
+    const interval = setInterval(calculateTimeRemaining, 60000);
+    return () => clearInterval(interval);
+  }, [rental?.rental_start_date, rental?.rental_end_date, rental?.started_at, rental?.rental_status]);
 
   // Calculate elapsed time
   useEffect(() => {
@@ -724,7 +723,7 @@ export default function RentalDetails() {
     }
 
     const updateElapsedTime = () => {
-      const now = new Date(currentTime);
+      const now = new Date();
       const startDate = new Date(rental.started_at);
       const diff = now - startDate;
 
@@ -741,8 +740,9 @@ export default function RentalDetails() {
     };
 
     updateElapsedTime();
-  }, [rental?.started_at, rental?.rental_status, currentTime]);
-
+    const interval = setInterval(updateElapsedTime, 1000);
+    return () => clearInterval(interval);
+  }, [rental?.started_at, rental?.rental_status]);
 
   const uploadFromGallery = () => {
     const input = document.createElement('input');
@@ -1415,41 +1415,13 @@ export default function RentalDetails() {
                   </div>
                 </div>
 
-                {/* Step 3: Payment */}
-                <div className={`flex items-start gap-3 p-3 rounded-lg ${isPaymentSufficient() ? 'bg-green-50 border border-green-200' : 'bg-gray-50 border border-gray-200'}`}>
-                  <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${isPaymentSufficient() ? 'bg-green-500' : 'bg-gray-300'}`}>
-                    {isPaymentSufficient() ? (
-                      <CheckCircle className="w-5 h-5 text-white" />
-                    ) : (
-                      <span className="text-white font-bold">3</span>
-                    )}
-                  </div>
-                  <div className="flex-1">
-                    <h4 className="font-semibold text-sm sm:text-base">Payment</h4>
-                    <p className="text-xs sm:text-sm text-gray-600 mt-1">
-                      {isPaymentSufficient() ? '✓ Payment received' : 'Complete rental payment'}
-                    </p>
-                    {!isPaymentSufficient() && (
-                      <Button 
-                        onClick={markAsPaid}
-                        disabled={isUpdatingPayment}
-                        size="sm"
-                        className="mt-2 bg-blue-600 hover:bg-blue-700 text-white"
-                      >
-                        <CreditCard className="w-4 h-4 mr-2" />
-                        {isUpdatingPayment ? 'Updating...' : 'Mark Paid'}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-
-                {/* Step 4: Sign Contract */}
+                {/* Step 3: Sign Contract */}
                 <div className={`flex items-start gap-3 p-3 rounded-lg ${(rental.contract_signed || rental.signature_url) ? 'bg-green-50 border border-green-200' : 'bg-gray-50 border border-gray-200'}`}>
                   <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${(rental.contract_signed || rental.signature_url) ? 'bg-green-500' : 'bg-gray-300'}`}>
                     {(rental.contract_signed || rental.signature_url) ? (
                       <CheckCircle className="w-5 h-5 text-white" />
                     ) : (
-                      <span className="text-white font-bold">4</span>
+                      <span className="text-white font-bold">3</span>
                     )}
                   </div>
                   <div className="flex-1">
@@ -1469,6 +1441,23 @@ export default function RentalDetails() {
                         Sign Contract
                       </Button>
                     )}
+                  </div>
+                </div>
+
+                {/* Step 4: Payment */}
+                <div className={`flex items-start gap-3 p-3 rounded-lg ${isPaymentSufficient() ? 'bg-green-50 border border-green-200' : 'bg-gray-50 border border-gray-200'}`}>
+                  <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${isPaymentSufficient() ? 'bg-green-500' : 'bg-gray-300'}`}>
+                    {isPaymentSufficient() ? (
+                      <CheckCircle className="w-5 h-5 text-white" />
+                    ) : (
+                      <span className="text-white font-bold">4</span>
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-semibold text-sm sm:text-base">Payment</h4>
+                    <p className="text-xs sm:text-sm text-gray-600 mt-1">
+                      {isPaymentSufficient() ? '✓ Payment received' : 'Complete rental payment'}
+                    </p>
                   </div>
                 </div>
 
@@ -2053,52 +2042,21 @@ export default function RentalDetails() {
               </div>
             )}
 
-            {/* ✅ UPDATED: Desktop-only Mark as Paid button */}
+            {/* ✅ UPDATED: Hide "Mark as Paid" button when deposit is returned */}
             <div className="mt-4 flex flex-wrap items-center gap-4">
                 <strong>Payment Status:</strong> 
                 {getPaymentStatusBadge(rental.payment_status)}
-                {/* Desktop-only Mark as Paid button */}
-                <div className="hidden sm:block">
-                    {(() => {
-                        const totalAmount = (rental.unit_price || rental.total_amount || 0) + (rental.overage_charge || 0) + (rental.total_extension_price || 0);
-                        const depositPaid = rental.deposit_amount || 0;
-                        const balanceDue = totalAmount - depositPaid;
-                        const damageDeposit = parseFloat(rental?.damage_deposit || 0);
-                        const depositToReturn = Math.max(0, damageDeposit - balanceDue);
-                        
-                        const isBalanceCoveredByDeposit = balanceDue > 0 && rental.deposit_returned_at && Math.abs((damageDeposit - balanceDue) - depositToReturn) < 0.01;
-                        
-                        return rental.payment_status?.toLowerCase() !== 'paid' && !isPendingApproval && !isBalanceCoveredByDeposit && (
-                            <Button 
-                                onClick={markAsPaid} 
-                                disabled={isUpdatingPayment} 
-                                className="bg-green-600 hover:bg-green-700 text-white font-semibold text-xs sm:text-sm"
-                                size="sm"
-                            >
-                                <CreditCard className="w-4 h-4 mr-2" />
-                                {isUpdatingPayment ? 'Updating...' : 'Mark as Paid'}
-                            </Button>
-                        );
-                    })()}
-                </div>
-                {(() => {
-                  const totalAmount = (rental.unit_price || rental.total_amount || 0) + (rental.overage_charge || 0) + (rental.total_extension_price || 0);
-                  const depositPaid = rental.deposit_amount || 0;
-                  const balanceDue = totalAmount - depositPaid;
-                  const damageDeposit = parseFloat(rental?.damage_deposit || 0);
-                  const depositToReturn = Math.max(0, damageDeposit - balanceDue);
-                  const isBalanceCoveredByDeposit = balanceDue > 0 && rental.deposit_returned_at && Math.abs((damageDeposit - balanceDue) - depositToReturn) < 0.01;
-                  
-                  if (isBalanceCoveredByDeposit) {
-                    return (
-                      <span className="text-sm text-green-600 flex items-center gap-1">
-                        <CheckCircle className="w-4 h-4" />
-                        ✓ Balance covered by damage deposit
-                      </span>
-                    );
-                  }
-                  return null;
-                })()}
+                {rental.payment_status?.toLowerCase() !== 'paid' && !isPendingApproval && !rental.deposit_returned_at && (
+                    <Button 
+                        onClick={markAsPaid} 
+                        disabled={isUpdatingPayment} 
+                        className="bg-green-600 hover:bg-green-700 text-white font-semibold text-xs sm:text-sm"
+                        size="sm"
+                    >
+                        <CreditCard className="w-4 h-4 mr-2" />
+                        {isUpdatingPayment ? 'Updating...' : 'Mark as Paid'}
+                    </Button>
+                )}
                 {isPendingApproval && (
                   <span className="text-xs text-yellow-600 flex items-center gap-1">
                     <Clock className="w-3 h-3" />
@@ -2506,17 +2464,7 @@ export default function RentalDetails() {
           </Button>
         </div>
         <div className="flex gap-2">
-            {(() => {
-                const totalAmount = (rental.unit_price || rental.total_amount || 0) + (rental.overage_charge || 0) + (rental.total_extension_price || 0);
-                const depositPaid = rental.deposit_amount || 0;
-                const balanceDue = totalAmount - depositPaid;
-                const damageDeposit = parseFloat(rental?.damage_deposit || 0);
-                const depositToReturn = Math.max(0, damageDeposit - balanceDue);
-                
-                // Hide button if balance is covered by damage deposit deduction
-                const isBalanceCoveredByDeposit = balanceDue > 0 && rental.deposit_returned_at && Math.abs((damageDeposit - balanceDue) - depositToReturn) < 0.01;
-                
-                return rental.payment_status?.toLowerCase() !== 'paid' && !isPendingApproval && !isBalanceCoveredByDeposit && (
+            {rental.payment_status?.toLowerCase() !== 'paid' && !isPendingApproval && !rental.deposit_returned_at && (
                 <Button 
                     onClick={markAsPaid} 
                     disabled={isUpdatingPayment} 
@@ -2525,26 +2473,7 @@ export default function RentalDetails() {
                     <CreditCard className="w-4 h-4 mr-1" />
                     {isUpdatingPayment ? '...' : 'Paid'}
                 </Button>
-                );
-            })()}
-            {(() => {
-                const totalAmount = (rental.unit_price || rental.total_amount || 0) + (rental.overage_charge || 0) + (rental.total_extension_price || 0);
-                const depositPaid = rental.deposit_amount || 0;
-                const balanceDue = totalAmount - depositPaid;
-                const damageDeposit = parseFloat(rental?.damage_deposit || 0);
-                const depositToReturn = Math.max(0, damageDeposit - balanceDue);
-                const isBalanceCoveredByDeposit = balanceDue > 0 && rental.deposit_returned_at && Math.abs((damageDeposit - balanceDue) - depositToReturn) < 0.01;
-                
-                if (isBalanceCoveredByDeposit) {
-                  return (
-                    <span className="text-sm text-green-600 flex items-center justify-center gap-1 w-full">
-                      <CheckCircle className="w-4 h-4" />
-                      ✓ Balance covered by damage deposit
-                    </span>
-                  );
-                }
-                return null;
-            })()}
+            )}
             {rental?.customer_phone && (
               <Button 
                 onClick={handleShareViaWhatsApp} 

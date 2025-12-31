@@ -9,6 +9,7 @@ import ViewCustomerDetailsDrawer from '../../components/admin/ViewCustomerDetail
 import { getPaymentStatusStyle } from '../../config/statusColors';
 import { Plus, Clock, List, Grid, LayoutGrid } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+import { useTimer } from '../../hooks/useTimer';
 
 const Rentals = () => {
   const navigate = useNavigate();
@@ -38,6 +39,91 @@ const Rentals = () => {
     customerId: null,
     rental: null
   });
+
+  // Use shared timer hook
+  const currentTime = useTimer();
+
+  // Force component re-render when timer updates
+  const [, forceUpdate] = useState(0);
+  
+  useEffect(() => {
+    forceUpdate(prev => prev + 1);
+  }, [currentTime]);
+
+  // Calculate time remaining for active rentals
+  const calculateTimeRemaining = (rental) => {
+    if (rental.rental_status !== 'active') {
+      return null;
+    }
+    
+    const now = currentTime;
+    const endDate = new Date(rental.rental_end_date);
+    
+    // For hourly rentals, include time
+    const isHourly = rental.rental_type === 'hourly';
+    if (isHourly && rental.rental_end_time) {
+      const [hours, minutes] = rental.rental_end_time.split(':');
+      endDate.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+    } else {
+      // For daily rentals, set to end of day
+      endDate.setHours(23, 59, 59, 999);
+    }
+    
+    const diffMs = endDate - now;
+    
+    if (diffMs <= 0) {
+      return { 
+        text: isHourly ? '00:00:00' : 'Overdue', 
+        color: 'text-red-600', 
+        bgColor: 'bg-red-50', 
+        icon: '⚠️',
+        isDigital: isHourly
+      };
+    }
+    
+    // For hourly rentals, show digital countdown HH:MM:SS
+    if (isHourly) {
+      const totalSeconds = Math.floor(diffMs / 1000);
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+      
+      const timeStr = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+      
+      return {
+        text: timeStr,
+        color: hours === 0 && minutes <= 30 ? 'text-red-600' : hours <= 2 ? 'text-orange-600' : 'text-green-600',
+        bgColor: hours === 0 && minutes <= 30 ? 'bg-red-50' : hours <= 2 ? 'bg-orange-50' : 'bg-green-50',
+        icon: hours === 0 && minutes <= 30 ? '🔴' : '⏰',
+        isDigital: true
+      };
+    }
+    
+    // For daily rentals, show days/hours format
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffHours / 24);
+    const remainingHours = diffHours % 24;
+    
+    if (diffDays > 0) {
+      const text = diffDays === 1 ? '1 day' : `${diffDays} days`;
+      const fullText = remainingHours > 0 ? `${text} ${remainingHours}h` : text;
+      return { 
+        text: fullText, 
+        color: diffDays <= 1 ? 'text-orange-600' : 'text-green-600',
+        bgColor: diffDays <= 1 ? 'bg-orange-50' : 'bg-green-50',
+        icon: diffDays <= 1 ? '⏰' : '✅',
+        isDigital: false
+      };
+    } else {
+      return { 
+        text: `${diffHours}h left`, 
+        color: diffHours <= 3 ? 'text-red-600' : 'text-orange-600',
+        bgColor: diffHours <= 3 ? 'bg-red-50' : 'bg-orange-50',
+        icon: diffHours <= 3 ? '🔴' : '⏰',
+        isDigital: false
+      };
+    }
+  };
 
   const fetchRentals = async (currentStatusFilter, currentPaymentStatusFilter) => {
     try {
@@ -247,6 +333,16 @@ const Rentals = () => {
       supabase.removeChannel(vehicleSubscription);
     };
   }, [statusFilter, paymentStatusFilter]);
+
+  // Check for openForm state from navigation
+  useEffect(() => {
+    if (location.state?.openForm) {
+      console.log('🔵 Opening form from navigation state');
+      setShowStepperForm(true);
+      // Clear the state to prevent reopening on refresh
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
   const handleRentalSuccess = (rentalData) => {
     console.log('Rental operation successful:', rentalData);
@@ -1102,6 +1198,19 @@ const Rentals = () => {
                             <div className="text-gray-500">to {formatDate(rental.rental_end_date)}</div>
                           </div>
                         </div>
+
+                        {/* Time Remaining for Active Rentals */}
+                        {(() => {
+                          const timeRemaining = calculateTimeRemaining(rental);
+                          return timeRemaining ? (
+                            <div className={`flex items-center justify-center gap-1.5 ${timeRemaining.bgColor} px-2 py-1.5 rounded-md border ${timeRemaining.color.replace('text-', 'border-')}`}>
+                              <Clock className={`w-3.5 h-3.5 ${timeRemaining.color}`} />
+                              <span className={`text-xs font-extrabold ${timeRemaining.color} tracking-tight`}>
+                                {timeRemaining.text}
+                              </span>
+                            </div>
+                          ) : null;
+                        })()}
 
                         {/* Payment Info */}
                         <div className="flex items-center justify-between gap-2 pt-2 border-t border-gray-100">

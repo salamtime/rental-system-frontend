@@ -5,7 +5,7 @@ import {
   Calculator, Info, Phone, Mail, Calendar, MapPin, FileText,
   Upload, Shield, CheckCircle, XCircle, CalendarDays, Car as CarIcon,
   Users, BadgeCheck, FileImage, DownloadCloud, Plus, Minus,
-  ChevronDown, ChevronUp, Eye, Edit2, Trash2, Save, X
+  ChevronDown, ChevronUp, Eye, Edit2, Trash2, Save
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { useNavigate } from 'react-router-dom';
@@ -69,6 +69,7 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     total_amount: 0,
     deposit_amount: 0,
     damage_deposit: 0,
+    damage_deposit_source: '', // NEW: track preset source
     remaining_amount: 0,
     payment_status: 'unpaid',
     
@@ -102,7 +103,14 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
   const [transportFees, setTransportFees] = useState({ pickup_fee: 0, dropoff_fee: 0 });
   const [availabilityStatus, setAvailabilityStatus] = useState('unknown');
   const [autoCalculatedPrice, setAutoCalculatedPrice] = useState(0);
-  const [pricingSource, setPricingSource] = useState('default');
+  
+  // NEW: Damage Deposit States
+  const [damageDepositConfig, setDamageDepositConfig] = useState({
+    vehicleModelPresets: {},
+    allowCustomDeposit: true
+  });
+  const [selectedDepositTab, setSelectedDepositTab] = useState(null);
+  const [customDepositAmount, setCustomDepositAmount] = useState('');
   
   // Customer Data
   const [customers, setCustomers] = useState([]);
@@ -116,14 +124,57 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
   const isProgrammaticChange = useRef(false);
   const customerSearchRef = useRef(null);
 
+  // ==================== NEW: LOAD DAMAGE DEPOSIT CONFIG ====================
+  const loadDamageDepositConfig = async () => {
+    try {
+      console.log('📡 Loading damage deposit configuration...');
+      
+      const { data, error } = await supabase
+        .from('app_settings')
+        .select('damage_deposit_presets, allow_custom_deposit')
+        .eq('id', 1)
+        .single();
+
+      if (error) throw error;
+
+      if (data) {
+        const config = {
+          vehicleModelPresets: data.damage_deposit_presets || {},
+          allowCustomDeposit: data.allow_custom_deposit ?? true
+        };
+        
+        setDamageDepositConfig(config);
+        console.log('✅ Loaded damage deposit config:', config);
+      }
+    } catch (error) {
+      console.error('❌ Error loading damage deposit config:', error);
+      setDamageDepositConfig({
+        vehicleModelPresets: {},
+        allowCustomDeposit: true
+      });
+    }
+  };
+
+  // ==================== NEW: GET ENABLED PRESETS FOR VEHICLE ====================
+  const getEnabledPresetsForVehicle = (vehicleId) => {
+    if (!vehicleId) return [];
+    
+    const vehicle = availableVehicles.find(v => v.id == vehicleId);
+    if (!vehicle || !vehicle.vehicle_model_id) return [];
+    
+    const presets = damageDepositConfig.vehicleModelPresets[vehicle.vehicle_model_id] || [];
+    return presets.filter(p => p.enabled);
+  };
+
   // ==================== INITIALIZATION ====================
   useEffect(() => {
     const init = async () => {
       await Promise.all([
         loadCustomers(),
         loadRentals(),
-        loadAvailableVehiclesWithPrices(),
-        loadTransportFees()
+        loadVehicleModels(),
+        loadTransportFees(),
+        loadDamageDepositConfig() // NEW
       ]);
       
       const today = getMoroccoTodayString();
@@ -140,6 +191,30 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     
     init();
   }, []);
+
+  // ==================== NEW: AUTO-SELECT FIRST PRESET ====================
+  useEffect(() => {
+    if (formData.vehicle_id) {
+      const enabledPresets = getEnabledPresetsForVehicle(formData.vehicle_id);
+      
+      if (enabledPresets.length > 0) {
+        const firstPreset = enabledPresets[0];
+        setSelectedDepositTab(firstPreset.label);
+        setFormData(prev => ({
+          ...prev,
+          damage_deposit: firstPreset.amount,
+          damage_deposit_source: firstPreset.label
+        }));
+        console.log(`✅ Auto-selected deposit: ${firstPreset.label} (${firstPreset.amount} MAD)`);
+      } else if (damageDepositConfig.allowCustomDeposit) {
+        setSelectedDepositTab('custom');
+        setFormData(prev => ({
+          ...prev,
+          damage_deposit_source: 'custom'
+        }));
+      }
+    }
+  }, [formData.vehicle_id, damageDepositConfig]);
 
   // ==================== DATA LOADING ====================
   const loadCustomers = async () => {
@@ -160,71 +235,28 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     }
   };
 
-  const loadAvailableVehiclesWithPrices = async () => {
+  const loadVehicleModels = async () => {
     try {
-      console.log('🚀 Loading available vehicles with REAL database prices...');
+      console.log('🚀 Loading vehicle models and available vehicles only...');
       
-      // Step 1: Load basic vehicles
-      const { data: vehicles, error: vError } = await supabase
+      const models = await VehicleModelService.getAllVehicleModels();
+      setVehicleModels(models || []);
+      console.log('📋 Loaded vehicle models:', models?.length || 0);
+      
+      const { data: vehicles, error } = await supabase
         .from('saharax_0u4w4d_vehicles')
         .select('*')
         .eq('status', 'available')
-        .order('name');
+        .order('id');
       
-      if (vError) {
-        console.error('❌ Error loading vehicles:', vError);
-        setAvailableVehicles([]);
-        return;
+      if (error) {
+        console.error('❌ Error loading vehicles:', error);
+      } else {
+        console.log('✅ Loaded available vehicles:', vehicles?.length || 0);
+        setAvailableVehicles(vehicles || []);
       }
-      
-      if (!vehicles || vehicles.length === 0) {
-        console.log('⚠️ No available vehicles found');
-        setAvailableVehicles([]);
-        return;
-      }
-      
-      console.log(`✅ Loaded ${vehicles.length} available vehicles`);
-      
-      // Step 2: Enrich each vehicle with pricing data
-      const vehiclesWithPrices = await Promise.all(
-        vehicles.map(async (vehicle) => {
-          if (vehicle.vehicle_model_id) {
-            try {
-              const { data: basePrice, error: pError } = await supabase
-                .from('app_4c3a7a6153_base_prices')
-                .select('hourly_price, daily_price, is_active, vehicle_model_id')
-                .eq('vehicle_model_id', vehicle.vehicle_model_id)
-                .eq('is_active', true)
-                .maybeSingle();
-              
-              if (!pError && basePrice) {
-                return {
-                  ...vehicle,
-                  base_price: [basePrice]
-                };
-              }
-            } catch (err) {
-              console.warn(`⚠️ Error fetching price for vehicle ${vehicle.id}:`, err);
-            }
-          }
-          
-          return {
-            ...vehicle,
-            base_price: []
-          };
-        })
-      );
-      
-      console.log(`✅ Enriched ${vehiclesWithPrices.length} vehicles with pricing info`);
-      setAvailableVehicles(vehiclesWithPrices);
-      
-      // Also load vehicle models for reference
-      const models = await VehicleModelService.getAllVehicleModels();
-      setVehicleModels(models || []);
-      
     } catch (error) {
       console.error('❌ Error loading vehicle data:', error);
-      setAvailableVehicles([]);
     }
   };
 
@@ -232,7 +264,6 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     try {
       const fees = await AppSettingsService.getTransportFees();
       setTransportFees(fees);
-      console.log('✅ Loaded transport fees:', fees);
     } catch (err) {
       console.error('Error loading transport fees:', err);
     }
@@ -240,8 +271,6 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
 
   // ==================== EDIT MODE INITIALIZATION ====================
   const initializeEditData = (data) => {
-    console.log('🔧 Initializing edit mode with data:', data);
-    
     let startTime = '';
     let endTime = '';
     
@@ -262,63 +291,20 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     const cleanStartDate = data.rental_start_date ? data.rental_start_date.split('T')[0] : '';
     const cleanEndDate = data.rental_end_date ? data.rental_end_date.split('T')[0] : '';
     
-    setFormData(prev => ({
-      // Customer Info
-      customer_name: data.customer_name || '',
-      customer_email: data.customer_email || '',
-      customer_phone: data.customer_phone || '',
-      customer_id: data.customer_id || null,
-      customer_licence_number: data.customer_licence_number || '',
-      customer_id_number: data.customer_id_number || '',
-      customer_dob: data.customer_dob || '',
-      customer_place_of_birth: data.customer_place_of_birth || '',
-      customer_nationality: data.customer_nationality || '',
-      customer_issue_date: data.customer_issue_date || '',
-      customer_id_image: data.customer_id_image || null,
-      
-      // Vehicle & Dates
-      vehicle_id: data.vehicle_id || '',
-      rental_type: data.rental_type || '',
+    setFormData({
+      ...formData,
+      ...data,
       rental_start_date: cleanStartDate,
       rental_end_date: cleanEndDate,
       rental_start_time: startTime,
       rental_end_time: endTime,
-      pickup_location: data.pickup_location || 'Office',
-      dropoff_location: data.dropoff_location || 'Office',
-      pickup_transport: data.pickup_transport || false,
-      dropoff_transport: data.dropoff_transport || false,
-      
-      // Second Driver
-      second_driver_name: data.second_driver_name || '',
-      second_driver_license: data.second_driver_license || '',
-      second_driver_id_image: data.second_driver_id_image || null,
-      
-      // Financial
-      quantity_days: data.quantity_days || 0,
-      unit_price: data.unit_price || 0,
-      transport_fee: data.transport_fee || 0,
-      total_amount: data.total_amount || 0,
-      deposit_amount: data.deposit_amount || 0,
-      damage_deposit: data.damage_deposit || 0,
-      remaining_amount: data.remaining_amount || 0,
-      payment_status: data.payment_status || 'unpaid',
-      
-      // Options
-      rental_status: data.rental_status || 'scheduled',
-      insurance_included: data.insurance_included !== undefined ? data.insurance_included : true,
-      helmet_included: data.helmet_included !== undefined ? data.helmet_included : true,
-      gear_included: data.gear_included || false,
-      contract_signed: data.contract_signed || false,
-      accessories: data.accessories || '',
-      signature_url: data.signature_url || null,
-      
-      // Approval
-      approval_status: data.approval_status || 'auto',
-      pending_total_request: data.pending_total_request || null
-    }));
+    });
+    
+    if (data.damage_deposit_source) {
+      setSelectedDepositTab(data.damage_deposit_source);
+    }
     
     isProgrammaticChange.current = true;
-    console.log('✅ Edit mode initialization complete');
   };
 
   // ==================== CORE FUNCTIONS ====================
@@ -339,111 +325,40 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     return isNaN(localDate.getTime()) ? null : localDate;
   };
 
-  // 🆕 FIXED: REAL DATABASE PRICING FUNCTION
-  const getRealPricing = async (vehicleId, rentalType) => {
-    console.log('💰 Getting REAL price for vehicle:', vehicleId, rentalType);
-    
-    if (!vehicleId) {
-      const fallbackPrice = rentalType === 'hourly' ? 400 : 1500;
-      console.warn('⚠️ No vehicle ID provided, using fallback:', fallbackPrice);
-      return { price: fallbackPrice, source: 'default' };
+  const getDirectPricing = (vehicleId, rentalType) => {
+    const pricingMap = {
+      '1': { hourly: 400, daily: 1500 },
+      '2': { hourly: 400, daily: 1500 },
+      '3': { hourly: 600, daily: 1800 },
+      '4': { hourly: 600, daily: 1800 },
+      '5': { hourly: 1000, daily: 3800 },
+      '6': { hourly: 1000, daily: 3800 },
+      '7': { hourly: 400, daily: 1500 },
+      '8': { hourly: 600, daily: 1800 },
+      '9': { hourly: 400, daily: 1500 },
+      '10': { hourly: 600, daily: 1800 },
+      '11': { hourly: 1000, daily: 3800 },
+      '12': { hourly: 1000, daily: 3800 },
+      '13': { hourly: 400, daily: 1500 },
+      '14': { hourly: 600, daily: 1800 },
+      '15': { hourly: 1000, daily: 3800 },
+      '23': { hourly: 400, daily: 1500 }
+    };
+
+    const vehiclePricing = pricingMap[vehicleId.toString()];
+    if (!vehiclePricing) {
+      return rentalType === 'hourly' ? 400 : 1500;
     }
-    
-    try {
-      const numericId = typeof vehicleId === 'string' ? Number(vehicleId) : vehicleId;
-      
-      // Step 1: Get the vehicle to find its model_id
-      const { data: vehicle, error: vError } = await supabase
-        .from('saharax_0u4w4d_vehicles')
-        .select('id, name, model, vehicle_model_id')
-        .eq('id', numericId)
-        .single();
-      
-      if (vError || !vehicle) {
-        console.error('❌ Vehicle not found:', vError?.message || 'No vehicle data');
-        const fallbackPrice = rentalType === 'hourly' ? 400 : 1500;
-        return { price: fallbackPrice, source: 'default' };
-      }
-      
-      console.log('🚗 Found vehicle:', {
-        id: vehicle.id,
-        name: vehicle.name,
-        model: vehicle.model,
-        vehicle_model_id: vehicle.vehicle_model_id
-      });
-      
-      // Step 2: Check if vehicle has model_id
-      if (!vehicle.vehicle_model_id) {
-        console.warn('⚠️ Vehicle has no model_id assigned');
-        const fallbackPrice = rentalType === 'hourly' ? 400 : 1500;
-        return { price: fallbackPrice, source: 'default' };
-      }
-      
-      // Step 3: Get ACTIVE price for this model
-      const { data: basePrice, error: pError } = await supabase
-        .from('app_4c3a7a6153_base_prices')
-        .select('hourly_price, daily_price, is_active')
-        .eq('vehicle_model_id', vehicle.vehicle_model_id)
-        .eq('is_active', true)
-        .maybeSingle();
-      
-      if (pError) {
-        console.warn('⚠️ Price query failed:', pError.message);
-        const fallbackPrice = rentalType === 'hourly' ? 400 : 1500;
-        return { price: fallbackPrice, source: 'default' };
-      }
-      
-      if (!basePrice) {
-        console.warn(`⚠️ No ACTIVE price for model ${vehicle.vehicle_model_id}`);
-        const fallbackPrice = rentalType === 'hourly' ? 400 : 1500;
-        return { price: fallbackPrice, source: 'default' };
-      }
-      
-      // Step 4: Return the correct price
-      const price = rentalType === 'hourly' 
-        ? parseFloat(basePrice.hourly_price) 
-        : parseFloat(basePrice.daily_price);
-      
-      console.log(`✅ Found ACTIVE price: ${price} MAD for ${rentalType}`);
-      return { price, source: 'database' };
-      
-    } catch (error) {
-      console.error('❌ Unexpected error in getRealPricing:', error);
-      const fallbackPrice = rentalType === 'hourly' ? 400 : 1500;
-      return { price: fallbackPrice, source: 'error' };
-    }
+
+    return vehiclePricing[rentalType] || 0;
   };
 
-  const autoPopulateUnitPrice = async () => {
-    if (!formData.vehicle_id || !formData.rental_type) {
-      console.log('⚠️ Cannot auto-populate: missing vehicle_id or rental_type');
-      return;
-    }
+  const autoPopulateUnitPrice = () => {
+    if (!formData.vehicle_id || !formData.rental_type) return;
     
-    console.log('🔄 Auto-populating price for:', {
-      vehicle_id: formData.vehicle_id,
-      rental_type: formData.rental_type
-    });
-    
-    try {
-      const result = await getRealPricing(formData.vehicle_id, formData.rental_type);
-      
-      console.log('💸 Setting unit price to:', result.price);
-      setAutoCalculatedPrice(result.price);
-      setPricingSource(result.source);
-      
-      setFormData(prev => ({ ...prev, unit_price: result.price }));
-      
-      // Show feedback
-      if (result.source === 'database') {
-        toast.success(`✅ Using database pricing: ${result.price} MAD`);
-      } else if (result.source === 'default') {
-        toast.warning('⚠️ Using default pricing (configure in Pricing Management)');
-      }
-    } catch (error) {
-      console.error('❌ Error auto-populating price:', error);
-      toast.error('Failed to load price');
-    }
+    const unitPrice = getDirectPricing(formData.vehicle_id, formData.rental_type);
+    setAutoCalculatedPrice(unitPrice);
+    setFormData(prev => ({ ...prev, unit_price: unitPrice }));
   };
 
   const calculateTransportFee = () => {
@@ -586,20 +501,23 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
           }
 
           const messageText = 
-            `SAHARAX - Rental Approval Required\n\n` +
-            `Price Override Request: ${pendingTotalRequest} MAD\n` +
-            `Rental ID: ${rentalId.substring(0, 8)}...\n` +
-            `Requested by: Employee\n` +
-            `Time: ${new Date().toLocaleTimeString('en-MA', { hour: '2-digit', minute: '2-digit' })}\n\n` +
-            `Direct Approval Link:\n` +
+            `🚨 *SAHARAX - Rental Approval Required*\n\n` +
+            `💰 *Price Override Request:* ${pendingTotalRequest} MAD\n` +
+            `📋 *Rental ID:* ${rentalId.substring(0, 8)}...\n` +
+            `👤 *Requested by:* Employee\n` +
+            `⏰ *Time:* ${new Date().toLocaleTimeString('en-MA', { hour: '2-digit', minute: '2-digit' })}\n\n` +
+            `🔗 *Direct Approval Link:*\n` +
             `${window.location.origin}/admin/rentals/${rentalId}\n\n` +
-            `Click the link above to review and take action.\n` +
-            `Action Required Within 24 Hours`;
+            `_Click the link above to review and take action._\n` +
+            `⚠️ *Action Required Within 24 Hours*`;
           
           const message = encodeURIComponent(messageText);
+
           const whatsappUrl = `https://wa.me/${cleanPhone}?text=${message}`;
 
           console.log(`📱 WHATSAPP: Opening WhatsApp for ${admin.full_name} (${admin.phone_number})`);
+          console.log(`📱 WHATSAPP: URL: ${whatsappUrl}`);
+
           window.open(whatsappUrl, '_blank');
           
           notificationCount++;
@@ -671,6 +589,25 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
       payment_status: status,
       deposit_amount: newDepositAmount
     }));
+  };
+
+  // ==================== NEW: DAMAGE DEPOSIT TAB HANDLER ====================
+  const handleDepositTabClick = (tabId, amount) => {
+    setSelectedDepositTab(tabId);
+    
+    if (tabId === 'custom') {
+      setFormData(prev => ({
+        ...prev,
+        damage_deposit: parseFloat(customDepositAmount) || 0,
+        damage_deposit_source: 'custom'
+      }));
+    } else {
+      setFormData(prev => ({
+        ...prev,
+        damage_deposit: amount,
+        damage_deposit_source: tabId
+      }));
+    }
   };
 
   // ==================== EVENT HANDLERS ====================
@@ -975,6 +912,7 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     try {
       console.log('🔍 DEBUG - Before submission:');
       console.log('vehicle_id:', formData.vehicle_id, 'Type:', typeof formData.vehicle_id);
+      console.log('Should be: Number (e.g., 1, 2, 3, 15, 16)');
       
       const currentTime = new Date().toTimeString().slice(0, 5);
       const submissionReadyFormData = { ...formData };
@@ -1050,6 +988,7 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
         total_amount: Number(submissionReadyFormData.total_amount) || 0,
         deposit_amount: Number(submissionReadyFormData.deposit_amount) || 0,
         damage_deposit: Number(submissionReadyFormData.damage_deposit) || 0,
+        damage_deposit_source: submissionReadyFormData.damage_deposit_source || null,
         remaining_amount: Number(submissionReadyFormData.remaining_amount) || 0,
         rental_status: submissionReadyFormData.rental_status || 'scheduled',
         payment_status: submissionReadyFormData.payment_status || 'unpaid',
@@ -1210,6 +1149,7 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
       dropoff_transport: false,
       deposit_amount: 0,
       damage_deposit: 0,
+      damage_deposit_source: '',
       remaining_amount: 0,
       customer_licence_number: '',
       customer_id_number: '',
@@ -1236,8 +1176,8 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     setAvailabilityStatus('unknown');
     setSelectedQuickDuration(null);
     setSuccessfullySubmitted(false);
-    setAutoCalculatedPrice(0);
-    setPricingSource('default');
+    setSelectedDepositTab(null);
+    setCustomDepositAmount('');
   };
 
   // ==================== AUTOMATION HOOKS ====================
@@ -1321,18 +1261,10 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
 
   useEffect(() => {
     if (formData.vehicle_id && formData.rental_type) {
-      console.log('🎯 Triggering price lookup');
-      
-      // Small delay to ensure state is updated
-      const timer = setTimeout(() => {
-        autoPopulateUnitPrice();
-      }, 100);
-      
-      return () => clearTimeout(timer);
+      autoPopulateUnitPrice();
     } else if (!formData.vehicle_id) {
       setFormData(prev => ({ ...prev, unit_price: 0 }));
       setAutoCalculatedPrice(0);
-      setPricingSource('default');
     }
   }, [formData.vehicle_id, formData.rental_type]);
 
@@ -1371,12 +1303,15 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     transportFees,
     availabilityStatus,
     autoCalculatedPrice,
-    pricingSource,
     customers,
     rentals,
     suggestions,
     mode,
     selectedQuickDuration,
+    damageDepositConfig,
+    selectedDepositTab,
+    customDepositAmount,
+    setCustomDepositAmount,
     
     handleInputChange,
     handleSuggestionClick,
@@ -1385,9 +1320,11 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     handleIDScanComplete,
     handleQuickHourSelect,
     handlePaymentStatusTabClick,
+    handleDepositTabClick,
     validateStep,
     handleSubmit,
     handleReset,
+    getEnabledPresetsForVehicle,
     
     composeDateTime,
     calculateQuantityAndPricing,
@@ -1399,7 +1336,7 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
   };
 };
 
-// ==================== UI COMPONENTS ====================
+// ==================== SIMPLIFIED UI COMPONENTS ====================
 
 const ProgressStepper = ({ currentStep, steps }) => (
   <div className="mb-8">
@@ -1483,116 +1420,54 @@ const TabbedInterface = ({ tabs, activeTab, onTabChange }) => (
   </div>
 );
 
-const VehicleCardGrid = ({ vehicles, selectedId, onSelect, disabled }) => {
-  // Helper to get price display info
-  const getPriceDisplay = (vehicle) => {
-    if (vehicle.base_price && vehicle.base_price.length > 0) {
-      const bp = vehicle.base_price[0];
-      if (bp.is_active) {
-        return {
-          hourly: bp.hourly_price,
-          daily: bp.daily_price,
-          hasPricing: true,
-          source: 'database'
-        };
-      }
-    }
-    
-    if (vehicle.hourly_price || vehicle.daily_price) {
-      return {
-        hourly: vehicle.hourly_price,
-        daily: vehicle.daily_price,
-        hasPricing: true,
-        source: 'vehicle'
-      };
-    }
-    
-    return { hourly: null, daily: null, hasPricing: false, source: 'none' };
-  };
-  
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-h-96 overflow-y-auto pr-2">
-      {vehicles.map((vehicle) => {
-        const isSelected = selectedId === vehicle.id || selectedId == vehicle.id;
-        const priceInfo = getPriceDisplay(vehicle);
-        
-        return (
-          <button
-            key={vehicle.id}
-            type="button"
-            onClick={() => {
-              console.log('🚗 Vehicle card clicked:', vehicle.id, vehicle.name);
-              console.log('💰 Vehicle pricing:', priceInfo);
-              onSelect(vehicle.id);
-            }}
-            disabled={disabled}
-            className={`relative p-4 rounded-lg border-2 transition-all text-left ${
-              isSelected
-                ? 'border-green-500 bg-green-50 ring-4 ring-green-100'
-                : 'border-gray-200 hover:border-gray-300 bg-white'
-            } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-          >
-            <div className="flex items-start gap-3">
-              <div className="p-2 bg-gray-100 rounded">
-                <CarIcon className="w-6 h-6 text-gray-600" />
-              </div>
-              <div className="flex-1">
-                <div className="mb-2">
-                  <span className="text-xs text-gray-500">Plate</span>
-                  <div className="text-xl font-bold text-gray-900">
-                    {vehicle.plate_number || vehicle.vehicle_plate_number || 'N/A'}
-                  </div>
+const VehicleCardGrid = ({ vehicles, selectedId, onSelect, disabled }) => (
+  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 max-h-96 overflow-y-auto pr-2">
+    {vehicles.map((vehicle) => {
+      const isSelected = selectedId === vehicle.id || selectedId == vehicle.id;
+      return (
+        <button
+          key={vehicle.id}
+          type="button"
+          onClick={() => {
+            console.log('🚗 Vehicle card clicked:', vehicle.id, vehicle.name);
+            onSelect(vehicle.id);
+          }}
+          disabled={disabled}
+          className={`relative p-4 rounded-lg border-2 transition-all ${
+            isSelected
+              ? 'border-green-500 bg-green-50 ring-4 ring-green-100'
+              : 'border-gray-200 hover:border-gray-300 bg-white'
+          } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+        >
+          <div className="flex items-start gap-3">
+            <div className="p-2 bg-gray-100 rounded">
+              <CarIcon className="w-6 h-6 text-gray-600" />
+            </div>
+            <div className="text-left flex-1">
+              <div className="mb-2">
+                <span className="text-xs text-gray-500">Plate</span>
+                <div className="text-xl font-bold text-gray-900">
+                  {vehicle.plate_number || 'N/A'}
                 </div>
-                
-                <h4 className="font-semibold text-gray-900">{vehicle.name}</h4>
-                <p className="text-sm text-gray-600">{vehicle.model || 'No model'}</p>
-                
-                {/* Price Display */}
-                {priceInfo.hasPricing ? (
-                  <div className="mt-2 space-y-1">
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="text-gray-500">Hourly:</span>
-                      <span className="font-medium text-blue-600">
-                        {priceInfo.hourly?.toFixed(0) || 'N/A'} MAD
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center text-sm">
-                      <span className="text-gray-500">Daily:</span>
-                      <span className="font-medium text-green-600">
-                        {priceInfo.daily?.toFixed(0) || 'N/A'} MAD
-                      </span>
-                    </div>
-                    {priceInfo.source === 'database' && (
-                      <div className="text-xs text-green-600 flex items-center gap-1">
-                        <CheckCircle className="w-3 h-3" />
-                        <span>Live pricing</span>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="mt-2">
-                    <div className="inline-flex items-center gap-1 px-2 py-1 bg-yellow-100 text-yellow-800 rounded text-xs">
-                      <AlertCircle className="w-3 h-3" />
-                      <span>No pricing configured</span>
-                    </div>
-                  </div>
-                )}
+              </div>
+              
+              <h4 className="font-semibold text-gray-900">{vehicle.name}</h4>
+              <p className="text-sm text-gray-600">{vehicle.model}</p>
+            </div>
+          </div>
+          
+          {isSelected && (
+            <div className="absolute top-2 right-2">
+              <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
+                <Check className="w-4 h-4 text-white" />
               </div>
             </div>
-            
-            {isSelected && (
-              <div className="absolute top-2 right-2">
-                <div className="w-6 h-6 bg-green-500 rounded-full flex items-center justify-center">
-                  <Check className="w-4 h-4 text-white" />
-                </div>
-              </div>
-            )}
-          </button>
-        );
-      })}
-    </div>
-  );
-};
+          )}
+        </button>
+      );
+    })}
+  </div>
+);
 
 const FileUpload = ({ label, value, onChange, accept = "image/*" }) => {
   const [dragOver, setDragOver] = useState(false);
@@ -1650,10 +1525,8 @@ const FileUpload = ({ label, value, onChange, accept = "image/*" }) => {
   );
 };
 
-const PriceCalculator = ({ formData, onPriceChange, pricingSource, autoCalculatedPrice }) => {
+const PriceCalculator = ({ formData, onPriceChange }) => {
   const [showBreakdown, setShowBreakdown] = useState(false);
-  const [isEditingRentalCost, setIsEditingRentalCost] = useState(false);
-  const [editedRentalCost, setEditedRentalCost] = useState('');
 
   const calculateBreakdown = () => {
     const rentalCost = (formData.quantity_days || 0) * (formData.unit_price || 0);
@@ -1673,134 +1546,23 @@ const PriceCalculator = ({ formData, onPriceChange, pricingSource, autoCalculate
 
   const breakdown = calculateBreakdown();
 
-  const handleEditRentalCost = () => {
-    setIsEditingRentalCost(true);
-    setEditedRentalCost(Math.round(breakdown.rentalCost).toString());
-  };
-
-  const handleSaveRentalCost = () => {
-    const newRentalCost = parseInt(editedRentalCost) || 0;
-    if (newRentalCost >= 0 && formData.quantity_days > 0) {
-      const newUnitPrice = newRentalCost / formData.quantity_days;
-      onPriceChange('unit_price', newUnitPrice);
-      console.log('💰 Manual rental cost change:', {
-        oldRentalCost: breakdown.rentalCost,
-        newRentalCost: newRentalCost,
-        newUnitPrice: newUnitPrice,
-        quantity: formData.quantity_days
-      });
-    }
-    setIsEditingRentalCost(false);
-  };
-
-  const handleCancelEdit = () => {
-    setIsEditingRentalCost(false);
-    setEditedRentalCost('');
-  };
-
-  const getPricingSourceBadge = () => {
-    switch (pricingSource) {
-      case 'database':
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-800 rounded text-xs">
-            <CheckCircle className="w-3 h-3" />
-            Live Database Pricing
-          </span>
-        );
-      case 'default':
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-1 bg-yellow-100 text-yellow-800 rounded text-xs">
-            <AlertCircle className="w-3 h-3" />
-            Default Pricing
-          </span>
-        );
-      case 'error':
-        return (
-          <span className="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-800 rounded text-xs">
-            <AlertCircle className="w-3 h-3" />
-            Pricing Error
-          </span>
-        );
-      default:
-        return null;
-    }
-  };
-
   return (
     <div className="bg-gray-50 rounded-lg p-4">
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-semibold text-gray-900">Price Summary</h3>
-        <div className="flex items-center gap-2">
-          {getPricingSourceBadge()}
-          <button
-            type="button"
-            onClick={() => setShowBreakdown(!showBreakdown)}
-            className="text-sm text-blue-600 hover:text-blue-800"
-          >
-            {showBreakdown ? 'Hide Details' : 'Show Details'}
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => setShowBreakdown(!showBreakdown)}
+          className="text-sm text-blue-600 hover:text-blue-800"
+        >
+          {showBreakdown ? 'Hide Details' : 'Show Details'}
+        </button>
       </div>
       
       <div className="space-y-3">
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <span className="text-gray-600 font-medium">Rental Cost:</span>
-            {formData.unit_price !== autoCalculatedPrice && (
-              <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                Manual override
-              </span>
-            )}
-          </div>
-          {isEditingRentalCost ? (
-            <div className="flex flex-col gap-3 w-full">
-              <div className="relative">
-                <input
-                  type="number"
-                  value={editedRentalCost}
-                  onChange={(e) => setEditedRentalCost(e.target.value)}
-                  className="w-full px-4 py-3 pr-16 text-lg border-2 border-blue-500 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-right font-semibold"
-                  min="0"
-                  step="1"
-                  inputMode="numeric"
-                  autoFocus
-                />
-                <span className="absolute right-4 top-1/2 -translate-y-1/2 text-lg text-gray-600 font-medium pointer-events-none">MAD</span>
-              </div>
-              <div className="flex gap-3">
-                <button
-                  type="button"
-                  onClick={handleSaveRentalCost}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 active:bg-green-800 transition-colors font-medium"
-                  title="Save"
-                >
-                  <Check className="w-5 h-5" />
-                  <span>Accept</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleCancelEdit}
-                  className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 active:bg-red-800 transition-colors font-medium"
-                  title="Cancel"
-                >
-                  <XCircle className="w-5 h-5" />
-                  <span>Decline</span>
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <span className="font-medium text-lg">{Math.round(breakdown.rentalCost)} MAD</span>
-              <button
-                type="button"
-                onClick={handleEditRentalCost}
-                className="p-2 text-blue-600 hover:text-blue-800 active:bg-blue-50 rounded-lg transition-colors"
-                title="Edit rental cost"
-              >
-                <Edit2 className="w-5 h-5" />
-              </button>
-            </div>
-          )}
+        <div className="flex justify-between">
+          <span className="text-gray-600">Rental Cost:</span>
+          <span className="font-medium">{breakdown.rentalCost.toFixed(2)} MAD</span>
         </div>
         
         <div className="flex justify-between">
@@ -1832,18 +1594,109 @@ const PriceCalculator = ({ formData, onPriceChange, pricingSource, autoCalculate
           </div>
         )}
       </div>
-      
-      <div className="mt-3 p-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-700">
-        {pricingSource === 'database' ? (
-          <>💡 <strong>Using live database pricing.</strong> Edit button allows manual override (requires approval for staff).</>
-        ) : (
-          <>⚠️ <strong>Using default pricing.</strong> Configure vehicle prices in Pricing Management.</>
-        )}
-      </div>
     </div>
   );
 };
 
+// ==================== NEW: DAMAGE DEPOSIT TABS COMPONENT ====================
+const DamageDepositTabs = ({ 
+  formData, 
+  enabledPresets, 
+  allowCustomDeposit, 
+  selectedTab, 
+  customAmount,
+  onTabClick,
+  onCustomAmountChange,
+  disabled 
+}) => {
+  const tabs = [
+    ...enabledPresets.map(preset => ({
+      id: preset.label,
+      label: preset.label,
+      amount: preset.amount
+    })),
+    ...(allowCustomDeposit ? [{
+      id: 'custom',
+      label: 'Custom',
+      amount: null
+    }] : [])
+  ];
+
+  if (tabs.length === 0) {
+    return (
+      <div>
+        <label className="block text-sm font-medium text-gray-700 mb-1">
+          Damage Deposit (MAD)
+        </label>
+        <input
+          type="number"
+          value={formData.damage_deposit || ''}
+          onChange={(e) => onCustomAmountChange(e.target.value)}
+          disabled={disabled}
+          className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+          min="0"
+          step="1"
+          placeholder="Optional"
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <label className="block text-sm font-medium text-gray-700 mb-2">
+        Damage Deposit Selection
+      </label>
+      
+      <div className="flex gap-2 flex-wrap mb-3">
+        {tabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            onClick={() => onTabClick(tab.id, tab.amount)}
+            disabled={disabled}
+            className={`px-4 py-2 rounded-lg border-2 font-medium transition-all text-sm ${
+              selectedTab === tab.id
+                ? 'border-blue-500 bg-blue-50 text-blue-700 ring-2 ring-blue-200'
+                : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50'
+            } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+          >
+            <div className="flex flex-col items-center">
+              <span className="font-semibold">{tab.label}</span>
+              {tab.amount !== null && (
+                <span className="text-xs mt-0.5">{tab.amount.toLocaleString()} MAD</span>
+              )}
+            </div>
+          </button>
+        ))}
+      </div>
+
+      {selectedTab === 'custom' && (
+        <div className="mt-3">
+          <input
+            type="number"
+            value={customAmount}
+            onChange={(e) => {
+              onCustomAmountChange(e.target.value);
+              onTabClick('custom', parseFloat(e.target.value) || 0);
+            }}
+            disabled={disabled}
+            className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+            min="0"
+            step="1"
+            placeholder="Enter custom amount"
+          />
+        </div>
+      )}
+
+      {selectedTab && selectedTab !== 'custom' && (
+        <div className="mt-2 text-sm text-gray-600">
+          Selected: <span className="font-medium text-gray-900">{formData.damage_deposit} MAD</span>
+        </div>
+      )}
+    </div>
+  );
+};
 
 // ==================== MAIN COMPONENT ====================
 const SimplifiedRentalWizard = ({ 
@@ -1874,9 +1727,12 @@ const SimplifiedRentalWizard = ({
     transportFees,
     availabilityStatus,
     autoCalculatedPrice,
-    pricingSource,
     suggestions,
     selectedQuickDuration,
+    damageDepositConfig,
+    selectedDepositTab,
+    customDepositAmount,
+    setCustomDepositAmount,
     
     handleInputChange,
     handleSuggestionClick,
@@ -1885,9 +1741,11 @@ const SimplifiedRentalWizard = ({
     handleIDScanComplete,
     handleQuickHourSelect,
     handlePaymentStatusTabClick,
+    handleDepositTabClick,
     validateStep,
     handleSubmit,
     handleReset,
+    getEnabledPresetsForVehicle,
     
     customerSearchRef
   } = useRentalWizard(initialData, mode);
@@ -1899,7 +1757,8 @@ const SimplifiedRentalWizard = ({
   ];
 
   const getSelectedVehicle = () => {
-    return availableVehicles.find(v => v.id == formData.vehicle_id);
+    return availableVehicles.find(v => v.id == formData.vehicle_id) || 
+           vehicleModels.find(v => v.id == formData.vehicle_id);
   };
 
   const formatPeriodDisplay = () => {
@@ -2138,612 +1997,564 @@ const SimplifiedRentalWizard = ({
 
   if (successfullySubmitted) {
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-        <div className="bg-white rounded-lg shadow-2xl p-8 max-w-md w-full">
-          <div className="flex flex-col items-center justify-center">
-            <Loader className="w-12 h-12 text-blue-600 animate-spin mb-4" />
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">
-              ✅ Rental Successfully Created!
-            </h2>
-            <p className="text-gray-600">Redirecting to rentals list...</p>
-          </div>
+      <div className="max-w-4xl mx-auto p-4">
+        <div className="flex flex-col items-center justify-center py-20">
+          <Loader className="w-12 h-12 text-blue-600 animate-spin mb-4" />
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">
+            ✅ Rental Successfully Created!
+          </h2>
+          <p className="text-gray-600">Redirecting to rentals list...</p>
         </div>
       </div>
     );
   }
 
   return (
-    <>
-      {/* Modal Overlay */}
-      <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 overflow-y-auto">
-        <div className="relative w-full max-w-5xl my-8">
-          {/* Close Button */}
-          <button
-            onClick={onCancel}
-            className="absolute -top-2 -right-2 z-10 p-2 bg-white rounded-full shadow-lg hover:bg-gray-100 transition-colors"
-            title="Close"
-          >
-            <X className="w-6 h-6 text-gray-600" />
-          </button>
+    <div className="max-w-4xl mx-auto p-4">
+      <ProgressStepper currentStep={currentStep} steps={steps} />
 
-          {/* Form Content */}
-          <div className="bg-white rounded-lg shadow-2xl max-h-[90vh] overflow-y-auto">
-            <div className="p-6">
-              <ProgressStepper currentStep={currentStep} steps={steps} />
-
-              {errors.general && (
-                <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <AlertCircle className="w-5 h-5 text-red-500" />
-                    <div>
-                      <p className="text-red-800 font-medium">Error</p>
-                      <p className="text-red-700 text-sm mt-1">{errors.general}</p>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {dateError && (
-                <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
-                  <div className="flex items-center gap-3">
-                    <AlertCircle className="w-5 h-5 text-yellow-500" />
-                    <p className="text-yellow-800">{dateError}</p>
-                  </div>
-                </div>
-              )}
-
-              <form onSubmit={handleFormSubmit} className="bg-white rounded-lg shadow-sm border border-gray-200">
-                {currentStep === 1 && (
-                  <div className="p-6">
-                    <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 mb-6">
-                      <div className="flex-1">
-                        <h2 className="text-xl font-bold text-gray-900">Customer Information</h2>
-                        <p className="text-gray-600 text-sm mt-1">Enter customer details or scan ID to auto-fill</p>
-                      </div>
-                      
-                      {/* Mobile-friendly Scan ID Button */}
-                      <button
-                        type="button"
-                        onClick={() => setShowIDScanModal(true)}
-                        className="w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-3 sm:px-6 sm:py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 active:bg-purple-800 transition-colors shadow-md hover:shadow-lg font-medium text-base sm:text-sm min-h-[44px]"
-                        disabled={loading || submitting || successfullySubmitted}
-                      >
-                        <Scan className="w-5 h-5" />
-                        <span>Scan ID</span>
-                      </button>
-                    </div>
-
-                    <TabbedInterface
-                      tabs={customerTabs}
-                      activeTab={activeTab}
-                      onTabChange={setActiveTab}
-                    />
-
-                    <CollapsibleSection title="Additional Customer Details" defaultOpen={false}>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            ID Number
-                          </label>
-                          <input
-                            type="text"
-                            value={formData.customer_id_number}
-                            onChange={(e) => handleInputChange('customer_id_number', e.target.value)}
-                            disabled={successfullySubmitted}
-                            className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Date of Birth
-                          </label>
-                          <input
-                            type="date"
-                            value={formData.customer_dob}
-                            onChange={(e) => handleInputChange('customer_dob', e.target.value)}
-                            disabled={successfullySubmitted}
-                            className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Place of Birth
-                          </label>
-                          <input
-                            type="text"
-                            value={formData.customer_place_of_birth}
-                            onChange={(e) => handleInputChange('customer_place_of_birth', e.target.value)}
-                            disabled={successfullySubmitted}
-                            className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Nationality
-                          </label>
-                          <input
-                            type="text"
-                            value={formData.customer_nationality}
-                            onChange={(e) => handleInputChange('customer_nationality', e.target.value)}
-                            disabled={successfullySubmitted}
-                            className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
-                          />
-                        </div>
-                      </div>
-                    </CollapsibleSection>
-                  </div>
-                )}
-
-                {currentStep === 2 && (
-                  <div className="p-6">
-                    <h2 className="text-xl font-bold text-gray-900 mb-6">Vehicle & Rental Period</h2>
-                    
-                    <div className="space-y-6">
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-3">
-                          Rental Type
-                        </label>
-                        <div className="flex gap-2">
-                          {['hourly', 'daily'].map((type) => (
-                            <button
-                              key={type}
-                              type="button"
-                              onClick={() => handleInputChange('rental_type', type)}
-                              disabled={successfullySubmitted}
-                              className={`flex-1 px-4 py-3 rounded-lg border-2 font-medium transition-all ${
-                                formData.rental_type === type
-                                  ? 'border-blue-500 bg-blue-50 text-blue-700 ring-2 ring-blue-200'
-                                  : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50'
-                              } ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
-                            >
-                              <div className="flex flex-col items-center">
-                                <span className="text-lg font-semibold">
-                                  {type.charAt(0).toUpperCase() + type.slice(1)}
-                                </span>
-                                <span className="text-xs text-gray-500 mt-1">
-                                  {type === 'hourly' ? 'Flexible timing' : '24-hour periods'}
-                                </span>
-                              </div>
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-3">
-                          Select Vehicle * ({availableVehicles.length} available)
-                        </label>
-                        {availableVehicles.length === 0 ? (
-                          <div className="text-center py-8 bg-gray-50 rounded-lg border border-gray-200">
-                            <CarIcon className="w-12 h-12 text-gray-300 mx-auto mb-3" />
-                            <p className="text-gray-500">No available vehicles found</p>
-                            <p className="text-sm text-gray-400 mt-1">
-                              Check vehicle status or configure pricing in Pricing Management
-                            </p>
-                          </div>
-                        ) : (
-                          <VehicleCardGrid
-                            vehicles={availableVehicles}
-                            selectedId={formData.vehicle_id}
-                            onSelect={(vehicleId) => {
-                              console.log('🚗 Vehicle selected:', vehicleId, 'Type:', typeof vehicleId);
-                              const numericId = Number(vehicleId);
-                              if (!isNaN(numericId)) {
-                                handleInputChange('vehicle_id', numericId);
-                              } else {
-                                console.error('Invalid vehicle ID:', vehicleId);
-                              }
-                            }}
-                            disabled={loading || successfullySubmitted}
-                          />
-                        )}
-                        {errors.vehicle_id && (
-                          <p className="text-red-500 text-xs mt-1">{errors.vehicle_id}</p>
-                        )}
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Start Date *
-                          </label>
-                          <input
-                            type="date"
-                            value={formData.rental_start_date}
-                            onChange={(e) => handleInputChange('rental_start_date', e.target.value)}
-                            disabled={successfullySubmitted}
-                            className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                              errors.rental_start_date ? 'border-red-500' : 'border-gray-300'
-                            } ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
-                          />
-                          {errors.rental_start_date && (
-                            <p className="text-red-500 text-xs mt-1">{errors.rental_start_date}</p>
-                          )}
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            End Date *
-                          </label>
-                          <input
-                            type="date"
-                            value={formData.rental_end_date}
-                            onChange={(e) => handleInputChange('rental_end_date', e.target.value)}
-                            disabled={successfullySubmitted}
-                            className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
-                              errors.rental_end_date ? 'border-red-500' : 'border-gray-300'
-                            } ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
-                          />
-                          {errors.rental_end_date && (
-                            <p className="text-red-500 text-xs mt-1">{errors.rental_end_date}</p>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Start Time
-                          </label>
-                          <input
-                            type="time"
-                            value={formData.rental_start_time}
-                            onChange={(e) => handleInputChange('rental_start_time', e.target.value)}
-                            disabled={successfullySubmitted}
-                            className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            End Time
-                          </label>
-                          <input
-                            type="time"
-                            value={formData.rental_end_time}
-                            onChange={(e) => handleInputChange('rental_end_time', e.target.value)}
-                            disabled={successfullySubmitted}
-                            className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
-                          />
-                        </div>
-                      </div>
-
-                      {formData.rental_type === 'hourly' && (
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Quick Select Duration
-                          </label>
-                          <div className="flex gap-2">
-                            {[1, 2, 3].map((hours) => (
-                              <button
-                                key={hours}
-                                type="button"
-                                onClick={() => handleQuickHourSelect(hours)}
-                                disabled={successfullySubmitted}
-                                className={`flex-1 px-3 py-2 rounded-lg transition-colors text-sm font-medium ${
-                                  selectedQuickDuration === hours
-                                    ? 'bg-blue-500 text-white border-2 border-blue-600'
-                                    : 'bg-gray-100 hover:bg-gray-200 text-gray-700 border-2 border-transparent'
-                                } ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
-                              >
-                                {hours} {hours === 1 ? 'Hour' : 'Hours'}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      <CollapsibleSection title="Transport Options" defaultOpen={false}>
-                        <div className="space-y-3">
-                          <label className="flex items-center gap-3">
-                            <input
-                              type="checkbox"
-                              checked={formData.pickup_transport}
-                              onChange={(e) => handleInputChange('pickup_transport', e.target.checked)}
-                              disabled={successfullySubmitted}
-                              className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-                            />
-                            <span className="text-gray-700">
-                              Pick-up Transport (+{transportFees.pickup_fee.toFixed(2)} MAD)
-                            </span>
-                          </label>
-                          <label className="flex items-center gap-3">
-                            <input
-                              type="checkbox"
-                              checked={formData.dropoff_transport}
-                              onChange={(e) => handleInputChange('dropoff_transport', e.target.checked)}
-                              disabled={successfullySubmitted}
-                              className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-                            />
-                            <span className="text-gray-700">
-                              Drop-off Transport (+{transportFees.dropoff_fee.toFixed(2)} MAD)
-                            </span>
-                          </label>
-                        </div>
-                      </CollapsibleSection>
-
-                      <CollapsibleSection title="Pickup & Drop-off Locations" defaultOpen={false}>
-                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Pickup Location
-                            </label>
-                            <select
-                              value={formData.pickup_location}
-                              onChange={(e) => handleInputChange('pickup_location', e.target.value)}
-                              disabled={successfullySubmitted}
-                              className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
-                            >
-                              <option value="Office">Office</option>
-                              <option value="Hotel">Hotel</option>
-                              <option value="Airport">Airport</option>
-                              <option value="Custom">Custom Location</option>
-                            </select>
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">
-                              Drop-off Location
-                            </label>
-                            <select
-                              value={formData.dropoff_location}
-                              onChange={(e) => handleInputChange('dropoff_location', e.target.value)}
-                              disabled={successfullySubmitted}
-                              className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
-                            >
-                              <option value="Office">Office</option>
-                              <option value="Hotel">Hotel</option>
-                              <option value="Airport">Airport</option>
-                              <option value="Custom">Custom Location</option>
-                            </select>
-                          </div>
-                        </div>
-                      </CollapsibleSection>
-                    </div>
-                  </div>
-                )}
-
-                {currentStep === 3 && (
-                  <div className="p-6">
-                    <h2 className="text-xl font-bold text-gray-900 mb-6">Review & Payment</h2>
-                    
-                    <div className="space-y-6">
-                      <div className="bg-gray-50 rounded-lg p-4">
-                        <h3 className="font-semibold text-gray-900 mb-3">Rental Summary</h3>
-                        <div className="space-y-2">
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Customer:</span>
-                            <span className="font-medium">{formData.customer_name}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Vehicle:</span>
-                            <span className="font-medium">
-                              {(() => {
-                                const vehicle = getSelectedVehicle();
-                                if (!vehicle) return 'Not selected';
-                                return `${vehicle.plate_number || vehicle.vehicle_plate_number || 'N/A'} - ${vehicle.model || vehicle.name}`;
-                              })()}
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Period:</span>
-                            <span className="font-medium">
-                              {formatPeriodDisplay()}
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Type:</span>
-                            <span className="font-medium capitalize">{formData.rental_type}</span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-gray-600">Days/Hours:</span>
-                            <span className="font-medium">{formData.quantity_days}</span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <PriceCalculator 
-                        formData={formData} 
-                        onPriceChange={handleInputChange}
-                        pricingSource={pricingSource}
-                        autoCalculatedPrice={autoCalculatedPrice}
-                      />
-
-                      <div className="space-y-4">
-                        <h3 className="font-semibold text-gray-900">Payment Details</h3>
-                        
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Payment Status
-                          </label>
-                          <div className="flex gap-2">
-                            {['paid', 'unpaid', 'partial'].map((status) => (
-                              <button
-                                key={status}
-                                type="button"
-                                onClick={() => handlePaymentStatusTabClick(status)}
-                                disabled={successfullySubmitted}
-                                className={`flex-1 px-4 py-2 rounded-lg border-2 font-medium transition-all capitalize ${
-                                  formData.payment_status === status
-                                    ? 'border-blue-500 bg-blue-50 text-blue-700 ring-2 ring-blue-200'
-                                    : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50'
-                                } ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
-                              >
-                                {status}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Deposit Amount (MAD)
-                          </label>
-                          <input
-                            type="number"
-                            value={formData.deposit_amount}
-                            onChange={(e) => handleInputChange('deposit_amount', parseFloat(e.target.value) || 0)}
-                            disabled={successfullySubmitted}
-                            className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
-                            min="0"
-                            step="0.01"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-sm font-medium text-gray-700 mb-1">
-                            Damage Deposit (MAD)
-                          </label>
-                          <input
-                            type="number"
-                            value={formData.damage_deposit}
-                            onChange={(e) => handleInputChange('damage_deposit', parseFloat(e.target.value) || 0)}
-                            disabled={successfullySubmitted}
-                            className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
-                            min="0"
-                            step="0.01"
-                            placeholder="Optional"
-                          />
-                        </div>
-                      </div>
-
-                      <CollapsibleSection title="Additional Options" defaultOpen={false}>
-                        <div className="space-y-3">
-                          <label className="flex items-center gap-3">
-                            <input
-                              type="checkbox"
-                              checked={formData.insurance_included}
-                              onChange={(e) => handleInputChange('insurance_included', e.target.checked)}
-                              disabled={successfullySubmitted}
-                              className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-                            />
-                            <span className="text-gray-700">Insurance Included</span>
-                          </label>
-                          <label className="flex items-center gap-3">
-                            <input
-                              type="checkbox"
-                              checked={formData.helmet_included}
-                              onChange={(e) => handleInputChange('helmet_included', e.target.checked)}
-                              disabled={successfullySubmitted}
-                              className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-                            />
-                            <span className="text-gray-700">Helmet Included</span>
-                          </label>
-                          <label className="flex items-center gap-3">
-                            <input
-                              type="checkbox"
-                              checked={formData.gear_included}
-                              onChange={(e) => handleInputChange('gear_included', e.target.checked)}
-                              disabled={successfullySubmitted}
-                              className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-                            />
-                            <span className="text-gray-700">Gear Included</span>
-                          </label>
-                          <label className="flex items-center gap-3">
-                            <input
-                              type="checkbox"
-                              checked={formData.contract_signed}
-                              onChange={(e) => handleInputChange('contract_signed', e.target.checked)}
-                              disabled={successfullySubmitted}
-                              className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
-                            />
-                            <span className="text-gray-700">Contract Signed</span>
-                          </label>
-                        </div>
-                      </CollapsibleSection>
-
-                      <div>
-                        <label className="block text-sm font-medium text-gray-700 mb-1">
-                          Accessories / Notes
-                        </label>
-                        <textarea
-                          value={formData.accessories}
-                          onChange={(e) => handleInputChange('accessories', e.target.value)}
-                          disabled={successfullySubmitted}
-                          className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
-                          rows="3"
-                          placeholder="Any additional accessories or notes..."
-                        />
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                <div className="p-6 border-t border-gray-200 bg-gray-50 rounded-b-lg">
-                  <div className="flex flex-col sm:flex-row gap-3">
-                    <div className="flex-1 flex gap-3">
-                      {currentStep > 1 && (
-                        <button
-                          type="button"
-                          onClick={handleBack}
-                          className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors flex-1 sm:flex-none"
-                          disabled={submitting || isSubmitting || successfullySubmitted}
-                        >
-                          <ChevronLeft className="w-4 h-4 inline mr-1" />
-                          Back
-                        </button>
-                      )}
-                      
-                      <button
-                        type="button"
-                        onClick={handleReset}
-                        className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors flex-1 sm:flex-none"
-                        disabled={submitting || isSubmitting || successfullySubmitted}
-                      >
-                        Reset Form
-                      </button>
-                      
-                      {onCancel && (
-                        <button
-                          type="button"
-                          onClick={onCancel}
-                          className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors flex-1 sm:flex-none"
-                          disabled={submitting || isSubmitting || successfullySubmitted}
-                        >
-                          Cancel
-                        </button>
-                      )}
-                    </div>
-                    
-                    <div className="flex-1 flex gap-3 justify-end">
-                      {currentStep < 3 ? (
-                        <button
-                          type="button"
-                          onClick={handleNext}
-                          className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center justify-center flex-1 sm:flex-none"
-                          disabled={submitting || isSubmitting || successfullySubmitted}
-                        >
-                          Next
-                          <ChevronRight className="w-4 h-4 ml-1" />
-                        </button>
-                      ) : (
-                        <button
-                          type="submit"
-                          onClick={() => {
-                            console.log('🟢 Create Rental button clicked explicitly');
-                            explicitSubmitRef.current = true;
-                          }}
-                          disabled={submitting || isSubmitting || isLoading || successfullySubmitted}
-                          className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center justify-center flex-1 sm:flex-none disabled:opacity-50 disabled:cursor-not-allowed"
-                        >
-                          {submitting || isSubmitting || isLoading ? (
-                            <>
-                              <Loader className="w-4 h-4 mr-2 animate-spin" />
-                              {mode === 'edit' ? 'Updating...' : 'Creating...'}
-                            </>
-                          ) : (
-                            mode === 'edit' ? 'Update Rental' : 'Create Rental'
-                          )}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </form>
+      {errors.general && (
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-red-500" />
+            <div>
+              <p className="text-red-800 font-medium">Error</p>
+              <p className="text-red-700 text-sm mt-1">{errors.general}</p>
             </div>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Keep existing ID Scan Modal */}
+      {dateError && (
+        <div className="mb-6 p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-yellow-500" />
+            <p className="text-yellow-800">{dateError}</p>
+          </div>
+        </div>
+      )}
+
+      <form onSubmit={handleFormSubmit} className="bg-white rounded-lg shadow-sm border border-gray-200">
+        {currentStep === 1 && (
+          <div className="p-6">
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">Customer Information</h2>
+                <p className="text-gray-600 text-sm mt-1">Enter customer details or scan ID to auto-fill</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowIDScanModal(true)}
+                className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition-colors"
+                disabled={loading || submitting || successfullySubmitted}
+              >
+                <Scan className="w-4 h-4" />
+                Scan ID
+              </button>
+            </div>
+
+            <TabbedInterface
+              tabs={customerTabs}
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
+            />
+
+            <CollapsibleSection title="Additional Customer Details" defaultOpen={false}>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    ID Number
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.customer_id_number}
+                    onChange={(e) => handleInputChange('customer_id_number', e.target.value)}
+                    disabled={successfullySubmitted}
+                    className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Date of Birth
+                  </label>
+                  <input
+                    type="date"
+                    value={formData.customer_dob}
+                    onChange={(e) => handleInputChange('customer_dob', e.target.value)}
+                    disabled={successfullySubmitted}
+                    className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Place of Birth
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.customer_place_of_birth}
+                    onChange={(e) => handleInputChange('customer_place_of_birth', e.target.value)}
+                    disabled={successfullySubmitted}
+                    className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Nationality
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.customer_nationality}
+                    onChange={(e) => handleInputChange('customer_nationality', e.target.value)}
+                    disabled={successfullySubmitted}
+                    className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  />
+                </div>
+              </div>
+            </CollapsibleSection>
+          </div>
+        )}
+
+        {currentStep === 2 && (
+          <div className="p-6">
+            <h2 className="text-xl font-bold text-gray-900 mb-6">Vehicle & Rental Period</h2>
+            
+            <div className="space-y-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-3">
+                  Rental Type
+                </label>
+                <div className="flex gap-2">
+                  {['hourly', 'daily'].map((type) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => handleInputChange('rental_type', type)}
+                      disabled={successfullySubmitted}
+                      className={`flex-1 px-4 py-3 rounded-lg border-2 font-medium transition-all ${
+                        formData.rental_type === type
+                          ? 'border-blue-500 bg-blue-50 text-blue-700 ring-2 ring-blue-200'
+                          : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50'
+                      } ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <div className="flex flex-col items-center">
+                        <span className="text-lg font-semibold">
+                          {type.charAt(0).toUpperCase() + type.slice(1)}
+                        </span>
+                        <span className="text-xs text-gray-500 mt-1">
+                          {type === 'hourly' ? 'Flexible timing' : '24-hour periods'}
+                        </span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-3">
+                  Select Vehicle * ({availableVehicles.length > 0 ? availableVehicles.length : vehicleModels.length} available)
+                </label>
+                <VehicleCardGrid
+                  vehicles={availableVehicles.length > 0 ? availableVehicles : vehicleModels}
+                  selectedId={formData.vehicle_id}
+                  onSelect={(vehicleId) => {
+                    console.log('🚗 Vehicle selected:', vehicleId, 'Type:', typeof vehicleId);
+                    const numericId = Number(vehicleId);
+                    if (!isNaN(numericId)) {
+                      handleInputChange('vehicle_id', numericId);
+                    } else {
+                      console.error('Invalid vehicle ID:', vehicleId);
+                    }
+                  }}
+                  disabled={loading || successfullySubmitted}
+                />
+                {errors.vehicle_id && (
+                  <p className="text-red-500 text-xs mt-1">{errors.vehicle_id}</p>
+                )}
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Start Date *
+                  </label>
+                  <input
+                    type="date"
+                    value={formData.rental_start_date}
+                    onChange={(e) => handleInputChange('rental_start_date', e.target.value)}
+                    disabled={successfullySubmitted}
+                    className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                      errors.rental_start_date ? 'border-red-500' : 'border-gray-300'
+                    } ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  />
+                  {errors.rental_start_date && (
+                    <p className="text-red-500 text-xs mt-1">{errors.rental_start_date}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    End Date *
+                  </label>
+                  <input
+                    type="date"
+                    value={formData.rental_end_date}
+                    onChange={(e) => handleInputChange('rental_end_date', e.target.value)}
+                    disabled={successfullySubmitted}
+                    className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                      errors.rental_end_date ? 'border-red-500' : 'border-gray-300'
+                    } ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  />
+                  {errors.rental_end_date && (
+                    <p className="text-red-500 text-xs mt-1">{errors.rental_end_date}</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Start Time
+                  </label>
+                  <input
+                    type="time"
+                    value={formData.rental_start_time}
+                    onChange={(e) => handleInputChange('rental_start_time', e.target.value)}
+                    disabled={successfullySubmitted}
+                    className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    End Time
+                  </label>
+                  <input
+                    type="time"
+                    value={formData.rental_end_time}
+                    onChange={(e) => handleInputChange('rental_end_time', e.target.value)}
+                    disabled={successfullySubmitted}
+                    className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  />
+                </div>
+              </div>
+
+              {formData.rental_type === 'hourly' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Quick Select Duration
+                  </label>
+                  <div className="flex gap-2">
+                    {[1, 2, 3].map((hours) => (
+                      <button
+                        key={hours}
+                        type="button"
+                        onClick={() => handleQuickHourSelect(hours)}
+                        disabled={successfullySubmitted}
+                        className={`flex-1 px-3 py-2 rounded-lg transition-colors text-sm font-medium ${
+                          selectedQuickDuration === hours
+                            ? 'bg-blue-500 text-white border-2 border-blue-600'
+                            : 'bg-gray-100 hover:bg-gray-200 text-gray-700 border-2 border-transparent'
+                        } ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        {hours} {hours === 1 ? 'Hour' : 'Hours'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <CollapsibleSection title="Transport Options" defaultOpen={false}>
+                <div className="space-y-3">
+                  <label className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={formData.pickup_transport}
+                      onChange={(e) => handleInputChange('pickup_transport', e.target.checked)}
+                      disabled={successfullySubmitted}
+                      className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-gray-700">
+                      Pick-up Transport (+{transportFees.pickup_fee.toFixed(2)} MAD)
+                    </span>
+                  </label>
+                  <label className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={formData.dropoff_transport}
+                      onChange={(e) => handleInputChange('dropoff_transport', e.target.checked)}
+                      disabled={successfullySubmitted}
+                      className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-gray-700">
+                      Drop-off Transport (+{transportFees.dropoff_fee.toFixed(2)} MAD)
+                    </span>
+                  </label>
+                </div>
+              </CollapsibleSection>
+
+              <CollapsibleSection title="Pickup & Drop-off Locations" defaultOpen={false}>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Pickup Location
+                    </label>
+                    <select
+                      value={formData.pickup_location}
+                      onChange={(e) => handleInputChange('pickup_location', e.target.value)}
+                      disabled={successfullySubmitted}
+                      className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <option value="Office">Office</option>
+                      <option value="Hotel">Hotel</option>
+                      <option value="Airport">Airport</option>
+                      <option value="Custom">Custom Location</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Drop-off Location
+                    </label>
+                    <select
+                      value={formData.dropoff_location}
+                      onChange={(e) => handleInputChange('dropoff_location', e.target.value)}
+                      disabled={successfullySubmitted}
+                      className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    >
+                      <option value="Office">Office</option>
+                      <option value="Hotel">Hotel</option>
+                      <option value="Airport">Airport</option>
+                      <option value="Custom">Custom Location</option>
+                    </select>
+                  </div>
+                </div>
+              </CollapsibleSection>
+            </div>
+          </div>
+        )}
+
+        {currentStep === 3 && (
+          <div className="p-6">
+            <h2 className="text-xl font-bold text-gray-900 mb-6">Review & Payment</h2>
+            
+            <div className="space-y-6">
+              <div className="bg-gray-50 rounded-lg p-4">
+                <h3 className="font-semibold text-gray-900 mb-3">Rental Summary</h3>
+                <div className="space-y-2">
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Customer:</span>
+                    <span className="font-medium">{formData.customer_name}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Vehicle:</span>
+                    <span className="font-medium">
+                      {(() => {
+                        const vehicle = getSelectedVehicle();
+                        if (!vehicle) return 'Not selected';
+                        return `${vehicle.plate_number || 'N/A'} - ${vehicle.model || vehicle.name}`;
+                      })()}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Period:</span>
+                    <span className="font-medium">
+                      {formatPeriodDisplay()}
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Type:</span>
+                    <span className="font-medium capitalize">{formData.rental_type}</span>
+                  </div>
+                </div>
+              </div>
+
+              <PriceCalculator formData={formData} onPriceChange={handleInputChange} />
+
+              <div className="space-y-4">
+                <h3 className="font-semibold text-gray-900">Payment Details</h3>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Payment Status
+                  </label>
+                  <div className="flex gap-2">
+                    {['paid', 'unpaid', 'partial'].map((status) => (
+                      <button
+                        key={status}
+                        type="button"
+                        onClick={() => handlePaymentStatusTabClick(status)}
+                        disabled={successfullySubmitted}
+                        className={`flex-1 px-4 py-2 rounded-lg border-2 font-medium transition-all capitalize ${
+                          formData.payment_status === status
+                            ? 'border-blue-500 bg-blue-50 text-blue-700 ring-2 ring-blue-200'
+                            : 'border-gray-200 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50'
+                        } ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
+                      >
+                        {status}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Deposit Amount (MAD)
+                  </label>
+                  <input
+                    type="number"
+                    value={formData.deposit_amount}
+                    onChange={(e) => handleInputChange('deposit_amount', parseFloat(e.target.value) || 0)}
+                    disabled={successfullySubmitted}
+                    className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
+                    min="0"
+                    step="0.01"
+                  />
+                </div>
+
+                <DamageDepositTabs
+                  formData={formData}
+                  enabledPresets={getEnabledPresetsForVehicle(formData.vehicle_id)}
+                  allowCustomDeposit={damageDepositConfig.allowCustomDeposit}
+                  selectedTab={selectedDepositTab}
+                  customAmount={customDepositAmount}
+                  onTabClick={handleDepositTabClick}
+                  onCustomAmountChange={setCustomDepositAmount}
+                  disabled={successfullySubmitted}
+                />
+              </div>
+
+              <CollapsibleSection title="Additional Options" defaultOpen={false}>
+                <div className="space-y-3">
+                  <label className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={formData.insurance_included}
+                      onChange={(e) => handleInputChange('insurance_included', e.target.checked)}
+                      disabled={successfullySubmitted}
+                      className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-gray-700">Insurance Included</span>
+                  </label>
+                  <label className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={formData.helmet_included}
+                      onChange={(e) => handleInputChange('helmet_included', e.target.checked)}
+                      disabled={successfullySubmitted}
+                      className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-gray-700">Helmet Included</span>
+                  </label>
+                  <label className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={formData.gear_included}
+                      onChange={(e) => handleInputChange('gear_included', e.target.checked)}
+                      disabled={successfullySubmitted}
+                      className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-gray-700">Gear Included</span>
+                  </label>
+                  <label className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={formData.contract_signed}
+                      onChange={(e) => handleInputChange('contract_signed', e.target.checked)}
+                      disabled={successfullySubmitted}
+                      className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"
+                    />
+                    <span className="text-gray-700">Contract Signed</span>
+                  </label>
+                </div>
+              </CollapsibleSection>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Accessories / Notes
+                </label>
+                <textarea
+                  value={formData.accessories}
+                  onChange={(e) => handleInputChange('accessories', e.target.value)}
+                  disabled={successfullySubmitted}
+                  className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${successfullySubmitted ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  rows="3"
+                  placeholder="Any additional accessories or notes..."
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="p-6 border-t border-gray-200 bg-gray-50 rounded-b-lg">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="flex-1 flex gap-3">
+              {currentStep > 1 && (
+                <button
+                  type="button"
+                  onClick={handleBack}
+                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors flex-1 sm:flex-none"
+                  disabled={submitting || isSubmitting || successfullySubmitted}
+                >
+                  <ChevronLeft className="w-4 h-4 inline mr-1" />
+                  Back
+                </button>
+              )}
+              
+              <button
+                type="button"
+                onClick={handleReset}
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors flex-1 sm:flex-none"
+                disabled={submitting || isSubmitting || successfullySubmitted}
+              >
+                Reset Form
+              </button>
+              
+              {onCancel && (
+                <button
+                  type="button"
+                  onClick={onCancel}
+                  className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-100 transition-colors flex-1 sm:flex-none"
+                  disabled={submitting || isSubmitting || successfullySubmitted}
+                >
+                  Cancel
+                </button>
+              )}
+            </div>
+            
+            <div className="flex-1 flex gap-3 justify-end">
+              {currentStep < 3 ? (
+                <button
+                  type="button"
+                  onClick={handleNext}
+                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center justify-center flex-1 sm:flex-none"
+                  disabled={submitting || isSubmitting || successfullySubmitted}
+                >
+                  Next
+                  <ChevronRight className="w-4 h-4 ml-1" />
+                </button>
+              ) : (
+                <button
+                  type="submit"
+                  onClick={() => {
+                    console.log('🟢 Create Rental button clicked explicitly');
+                    explicitSubmitRef.current = true;
+                  }}
+                  disabled={submitting || isSubmitting || isLoading || successfullySubmitted}
+                  className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center justify-center flex-1 sm:flex-none disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {submitting || isSubmitting || isLoading ? (
+                    <>
+                      <Loader className="w-4 h-4 mr-2 animate-spin" />
+                      {mode === 'edit' ? 'Updating...' : 'Creating...'}
+                    </>
+                  ) : (
+                    mode === 'edit' ? 'Update Rental' : 'Create Rental'
+                  )}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      </form>
+
       {showIDScanModal && (
         <EnhancedUnifiedIDScanModal
           isOpen={showIDScanModal}
@@ -2759,7 +2570,7 @@ const SimplifiedRentalWizard = ({
           title="Scan ID Document"
         />
       )}
-    </>
+    </div>
   );
 };
 

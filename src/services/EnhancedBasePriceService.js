@@ -1,351 +1,269 @@
 import { supabase } from '../lib/supabase';
-import OptimizedBasePriceService from './OptimizedBasePriceService';
+import TABLE_NAMES from '../config/tableNames';
 
 /**
- * EnhancedBasePriceService - FIXED: Now uses OptimizedBasePriceService to prevent timeouts
+ * EnhancedBasePriceService
  * 
- * This service now delegates to OptimizedBasePriceService which implements:
- * - Shorter query timeouts (5 seconds instead of 10)
- * - Aggressive caching
- * - Circuit breaker pattern
- * - Fallback strategies
- * - Retry logic with exponential backoff
- * 
- * PERFORMANCE OPTIMIZED: All timeout issues should be resolved
+ * Provides advanced base price management with caching and optimization
  */
 class EnhancedBasePriceService {
-  static VEHICLE_MODELS_TABLE = 'saharax_0u4w4d_vehicle_models';
-  static BASE_PRICES_TABLE = 'app_8be2ccb1f0_base_prices';
-  static QUERY_TIMEOUT = 5000; // Reduced timeout
+  static BASE_PRICES_TABLE = TABLE_NAMES.BASE_PRICES;
+  static VEHICLE_MODELS_TABLE = TABLE_NAMES.VEHICLE_MODELS;
+  
+  // Cache for base prices
+  static cache = {
+    basePrices: null,
+    vehicleModels: null,
+    lastFetch: null,
+    cacheDuration: 5 * 60 * 1000 // 5 minutes
+  };
 
   /**
-   * Calculate correct pricing based on hourly rate
+   * Check if cache is valid
    */
-  static calculateCorrectPricing(hourlyRate) {
-    const hourly = parseFloat(hourlyRate) || 0;
-    const daily = Math.round(hourly * 8 * 0.9);
-    const weekly = Math.round(daily * 7 * 0.85);
-    
-    return {
-      hourly_price: hourly,
-      daily_price: daily,
-      weekly_price: weekly
-    };
-  }
-
-  /**
-   * Validate pricing ratios
-   */
-  static validatePricingRatios(hourly, daily, weekly) {
-    const issues = [];
-    
-    if (daily && hourly) {
-      const dailyHourlyRatio = daily / hourly;
-      if (dailyHourlyRatio < 2) {
-        issues.push('Daily rate is too low compared to hourly rate');
-      }
-      if (dailyHourlyRatio > 12) {
-        issues.push('Daily rate is too high compared to hourly rate');
-      }
-    }
-    
-    if (weekly && daily) {
-      const weeklyDailyRatio = weekly / daily;
-      if (weeklyDailyRatio < 5) {
-        issues.push('Weekly rate is too low compared to daily rate');
-      }
-      if (weeklyDailyRatio > 8) {
-        issues.push('Weekly rate is too high compared to daily rate');
-      }
-    }
-    
-    return issues;
-  }
-
-  /**
-   * FIXED: Get all vehicle models with pricing - now uses OptimizedBasePriceService
-   */
-  static async getAllVehicleModelsWithPricing() {
-    try {
-      console.log('🔧 FIXED: Delegating to OptimizedBasePriceService.getAllVehicleModelsWithPricing...');
-      return await OptimizedBasePriceService.getAllVehicleModelsWithPricing();
-    } catch (err) {
-      console.error('❌ Error in getAllVehicleModelsWithPricing:', err);
-      return OptimizedBasePriceService.getFallbackVehicleModels();
-    }
-  }
-
-  /**
-   * FIXED: Get all base prices with models - now uses OptimizedBasePriceService
-   */
-  static async getAllBasePricesWithModels() {
-    try {
-      console.log('🔧 FIXED: Delegating to OptimizedBasePriceService.getAllBasePricesWithModels...');
-      return await OptimizedBasePriceService.getAllBasePricesWithModels();
-    } catch (err) {
-      console.error('❌ Error in getAllBasePricesWithModels:', err);
-      return OptimizedBasePriceService.getFallbackBasePrices();
-    }
-  }
-
-  /**
-   * FIXED: Get all vehicle models - now uses OptimizedBasePriceService
-   */
-  static async getAllVehicleModels() {
-    try {
-      console.log('🔧 FIXED: Delegating to OptimizedBasePriceService.getAllVehicleModels...');
-      return await OptimizedBasePriceService.getAllVehicleModels();
-    } catch (err) {
-      console.error('❌ Error in getAllVehicleModels:', err);
-      return OptimizedBasePriceService.getFallbackVehicleModels();
-    }
-  }
-
-  /**
-   * FIXED: Create or update base price - now uses OptimizedBasePriceService
-   */
-  static async upsertBasePrice(priceData) {
-    try {
-      console.log('💾 FIXED: Delegating to OptimizedBasePriceService.upsertBasePrice...');
-
-      // Validate required fields
-      if (!priceData.vehicle_model_id) {
-        throw new Error('Vehicle model ID is required');
-      }
-
-      // Parse input prices
-      const inputHourly = parseFloat(priceData.hourly_price) || 0;
-      const inputDaily = parseFloat(priceData.daily_price) || 0;
-      const inputWeekly = parseFloat(priceData.weekly_price) || 0;
-
-      let finalPrices;
-
-      // Auto-calculate pricing if needed
-      if (inputHourly > 0 && inputDaily === 0 && inputWeekly === 0) {
-        console.log('🔄 Auto-calculating daily and weekly prices from hourly rate...');
-        finalPrices = this.calculateCorrectPricing(inputHourly);
-      } else if (inputHourly > 0 && inputDaily > 0 && inputWeekly === 0) {
-        console.log('🔄 Auto-calculating weekly price from daily rate...');
-        finalPrices = {
-          hourly_price: inputHourly,
-          daily_price: inputDaily,
-          weekly_price: Math.round(inputDaily * 7 * 0.85)
-        };
-      } else {
-        finalPrices = {
-          hourly_price: inputHourly,
-          daily_price: inputDaily,
-          weekly_price: inputWeekly
-        };
-      }
-
-      // Validate pricing ratios
-      const validationIssues = this.validatePricingRatios(
-        finalPrices.hourly_price,
-        finalPrices.daily_price,
-        finalPrices.weekly_price
-      );
-
-      if (validationIssues.length > 0) {
-        console.warn('⚠️ Pricing validation warnings:', validationIssues);
-      }
-
-      // Prepare data for OptimizedBasePriceService
-      const optimizedPriceData = {
-        ...priceData,
-        ...finalPrices
-      };
-
-      const result = await OptimizedBasePriceService.upsertBasePrice(optimizedPriceData);
-      
-      // Log pricing calculation details
-      if (finalPrices.hourly_price !== inputHourly || finalPrices.daily_price !== inputDaily || finalPrices.weekly_price !== inputWeekly) {
-        console.log('📊 Pricing calculations applied:');
-        console.log(`   Input: ${inputHourly} (hourly), ${inputDaily} (daily), ${inputWeekly} (weekly)`);
-        console.log(`   Final: ${finalPrices.hourly_price} (hourly), ${finalPrices.daily_price} (daily), ${finalPrices.weekly_price} (weekly)`);
-      }
-      
-      return result;
-    } catch (err) {
-      console.error('❌ Error in upsertBasePrice:', err);
-      throw new Error(`Failed to save base price: ${err.message}`);
-    }
-  }
-
-  /**
-   * FIXED: Delete base price - now uses OptimizedBasePriceService
-   */
-  static async deleteBasePrice(priceId) {
-    try {
-      console.log('🗑️ FIXED: Delegating to OptimizedBasePriceService.deleteBasePrice...');
-      return await OptimizedBasePriceService.deleteBasePrice(priceId);
-    } catch (err) {
-      console.error('❌ Error in deleteBasePrice:', err);
-      throw new Error(`Failed to delete base price: ${err.message}`);
-    }
-  }
-
-  /**
-   * FIXED: Get base price by model ID - now uses OptimizedBasePriceService
-   */
-  static async getBasePriceByModelId(vehicleModelId) {
-    try {
-      console.log('🔧 FIXED: Delegating to OptimizedBasePriceService.getBasePriceByModelId...');
-      return await OptimizedBasePriceService.getBasePriceByModelId(vehicleModelId);
-    } catch (err) {
-      console.error('❌ Error in getBasePriceByModelId:', err);
-      return null;
-    }
-  }
-
-  /**
-   * FIXED: Get pricing for rental - now uses OptimizedBasePriceService
-   */
-  static async getPricingForRental(vehicleModelId, rentalType) {
-    try {
-      console.log('🔧 FIXED: Delegating to OptimizedBasePriceService.getPricingForRental...');
-      return await OptimizedBasePriceService.getPricingForRental(vehicleModelId, rentalType);
-    } catch (err) {
-      console.error('❌ Error in getPricingForRental:', err);
-      return 0;
-    }
-  }
-
-  /**
-   * Fix existing pricing data with correct calculations
-   */
-  static async fixExistingPricingData() {
-    try {
-      console.log('🔧 FIXED: Fixing existing pricing data using OptimizedBasePriceService...');
-      
-      const existingPrices = await this.getAllBasePricesWithModels();
-      
-      for (const price of existingPrices) {
-        const validationIssues = this.validatePricingRatios(
-          price.hourly_price,
-          price.daily_price,
-          price.weekly_price
-        );
-        
-        if (validationIssues.length > 0) {
-          console.log(`🔄 Fixing pricing for ${this.formatModelName(price.vehicle_model)}...`);
-          
-          const correctedPrices = this.calculateCorrectPricing(price.hourly_price);
-          
-          await this.upsertBasePrice({
-            id: price.id,
-            vehicle_model_id: price.vehicle_model_id,
-            created_at: price.created_at,
-            ...correctedPrices
-          });
-          
-          console.log(`✅ Fixed pricing for ${this.formatModelName(price.vehicle_model)}`);
-        }
-      }
-      
-      console.log('✅ Pricing data correction completed');
-      return true;
-    } catch (err) {
-      console.error('❌ Error fixing pricing data:', err);
-      throw new Error(`Failed to fix pricing data: ${err.message}`);
-    }
-  }
-
-  /**
-   * Deactivate existing active price for a vehicle model
-   */
-  static async deactivateExistingPrice(vehicleModelId) {
-    try {
-      console.log('🔄 FIXED: Delegating to OptimizedBasePriceService.deactivateExistingPrice...');
-      return await OptimizedBasePriceService.deactivateExistingPrice(vehicleModelId);
-    } catch (err) {
-      console.error('❌ Error in deactivateExistingPrice:', err);
-      console.warn('Could not deactivate existing prices, continuing...');
-    }
-  }
-
-  /**
-   * Format model name for display
-   */
-  static formatModelName(vehicleModel) {
-    if (!vehicleModel) return 'Unknown Model';
-    
-    const { name, model } = vehicleModel;
-    
-    if (name && model && name.toLowerCase().includes(model.toLowerCase())) {
-      return this.toTitleCase(name);
-    }
-    
-    if (name && model) {
-      return this.toTitleCase(`${name} ${model}`);
-    }
-    
-    return this.toTitleCase(name || model || 'Unknown');
-  }
-
-  /**
-   * Convert string to Title Case
-   */
-  static toTitleCase(str) {
-    if (!str) return '';
-    return str.toLowerCase().replace(/\b\w/g, l => l.toUpperCase());
-  }
-
-  /**
-   * Get current pricing for a vehicle model
-   */
-  static getCurrentPricing(basePriceData) {
-    if (!basePriceData) {
-      return {
-        hourly_price: 0,
-        daily_price: 0,
-        weekly_price: 0
-      };
-    }
-
-    return {
-      hourly_price: basePriceData.hourly_price || 0,
-      daily_price: basePriceData.daily_price || 0,
-      weekly_price: basePriceData.weekly_price || 0
-    };
-  }
-
-  /**
-   * Initialize base prices table
-   */
-  static async initializeBasePricesTable() {
-    try {
-      console.log('🔧 FIXED: Checking base prices table with OptimizedBasePriceService...');
-      return await OptimizedBasePriceService.healthCheck();
-    } catch (err) {
-      console.error('❌ Error checking base prices table:', err);
-      throw new Error(`Base prices table not accessible: ${err.message}`);
-    }
-  }
-
-  /**
-   * Fallback methods
-   */
-  static getFallbackVehicleModels() {
-    return OptimizedBasePriceService.getFallbackVehicleModels();
-  }
-
-  static getFallbackBasePrices() {
-    return OptimizedBasePriceService.getFallbackBasePrices();
+  static isCacheValid() {
+    if (!this.cache.lastFetch) return false;
+    const now = Date.now();
+    return (now - this.cache.lastFetch) < this.cache.cacheDuration;
   }
 
   /**
    * Clear cache
    */
   static clearCache() {
-    OptimizedBasePriceService.clearCache();
+    this.cache.basePrices = null;
+    this.cache.vehicleModels = null;
+    this.cache.lastFetch = null;
   }
 
   /**
-   * Get cache statistics
+   * Get all base prices with caching
    */
-  static getCacheStats() {
-    return OptimizedBasePriceService.getCacheStats();
+  static async getAllBasePrices(useCache = true) {
+    try {
+      // Return cached data if valid
+      if (useCache && this.isCacheValid() && this.cache.basePrices) {
+        console.log('📦 Returning cached base prices');
+        return this.cache.basePrices;
+      }
+
+      console.log('🔧 Fetching base prices from database...');
+      
+      const { data, error } = await supabase
+        .from(this.BASE_PRICES_TABLE)
+        .select(`
+          *,
+          vehicle_model:${this.VEHICLE_MODELS_TABLE}(
+            id,
+            name,
+            model,
+            vehicle_type
+          )
+        `)
+        .eq('is_active', true)
+        .order('updated_at', { ascending: false });
+
+      if (error) {
+        console.error('Error loading base prices:', error);
+        throw error;
+      }
+
+      // Update cache
+      this.cache.basePrices = data || [];
+      this.cache.lastFetch = Date.now();
+
+      console.log('✅ Base prices loaded and cached:', data?.length || 0, 'records');
+      return this.cache.basePrices;
+    } catch (err) {
+      console.error('Error in getAllBasePrices:', err);
+      throw new Error(`Failed to load base prices: ${err.message}`);
+    }
+  }
+
+  /**
+   * Get base price for a specific vehicle model
+   */
+  static async getBasePriceByModelId(vehicleModelId, useCache = true) {
+    try {
+      // Try to get from cache first
+      if (useCache && this.isCacheValid() && this.cache.basePrices) {
+        const cachedPrice = this.cache.basePrices.find(
+          bp => bp.vehicle_model_id === vehicleModelId
+        );
+        if (cachedPrice) {
+          console.log('📦 Returning cached base price for model:', vehicleModelId);
+          return cachedPrice;
+        }
+      }
+
+      console.log('🔧 Fetching base price for model:', vehicleModelId);
+      
+      const { data, error } = await supabase
+        .from(this.BASE_PRICES_TABLE)
+        .select(`
+          *,
+          vehicle_model:${this.VEHICLE_MODELS_TABLE}(
+            id,
+            name,
+            model,
+            vehicle_type
+          )
+        `)
+        .eq('vehicle_model_id', vehicleModelId)
+        .eq('is_active', true)
+        .single();
+
+      if (error && error.code !== 'PGRST116') {
+        console.error('Error loading base price:', error);
+        throw error;
+      }
+
+      console.log('✅ Base price loaded for model:', data);
+      return data;
+    } catch (err) {
+      console.error('Error in getBasePriceByModelId:', err);
+      return null;
+    }
+  }
+
+  /**
+   * Get all vehicle models with caching
+   */
+  static async getAllVehicleModels(useCache = true) {
+    try {
+      // Return cached data if valid
+      if (useCache && this.isCacheValid() && this.cache.vehicleModels) {
+        console.log('📦 Returning cached vehicle models');
+        return this.cache.vehicleModels;
+      }
+
+      console.log('🔧 Fetching vehicle models from database...');
+      
+      const { data, error } = await supabase
+        .from(this.VEHICLE_MODELS_TABLE)
+        .select('id, name, model, vehicle_type')
+        .eq('is_active', true)
+        .order('name');
+
+      if (error) {
+        console.error('Error loading vehicle models:', error);
+        throw error;
+      }
+
+      // Update cache
+      this.cache.vehicleModels = data || [];
+      this.cache.lastFetch = Date.now();
+
+      console.log('✅ Vehicle models loaded and cached:', data?.length || 0, 'records');
+      return this.cache.vehicleModels;
+    } catch (err) {
+      console.error('Error in getAllVehicleModels:', err);
+      throw new Error(`Failed to load vehicle models: ${err.message}`);
+    }
+  }
+
+  /**
+   * Upsert base price (invalidates cache)
+   */
+  static async upsertBasePrice(priceData) {
+    try {
+      console.log('💾 Upserting base price:', priceData);
+
+      // Validate required fields
+      if (!priceData.vehicle_model_id) {
+        throw new Error('Vehicle model ID is required');
+      }
+
+      // First, deactivate any existing price for this model
+      await supabase
+        .from(this.BASE_PRICES_TABLE)
+        .update({ 
+          is_active: false,
+          updated_at: new Date().toISOString()
+        })
+        .eq('vehicle_model_id', priceData.vehicle_model_id)
+        .eq('is_active', true);
+
+      // Prepare the data
+      const basePrice = {
+        vehicle_model_id: priceData.vehicle_model_id,
+        hourly_price: parseFloat(priceData.hourly_price) || 0,
+        daily_price: parseFloat(priceData.daily_price) || 0,
+        weekly_price: parseFloat(priceData.weekly_price) || 0,
+        is_active: true,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+
+      // If updating existing price, include the ID
+      if (priceData.id) {
+        basePrice.id = priceData.id;
+        basePrice.created_at = priceData.created_at;
+      }
+
+      const { data, error } = await supabase
+        .from(this.BASE_PRICES_TABLE)
+        .upsert(basePrice, {
+          onConflict: 'id'
+        })
+        .select(`
+          *,
+          vehicle_model:${this.VEHICLE_MODELS_TABLE}(
+            id,
+            name,
+            model,
+            vehicle_type
+          )
+        `)
+        .single();
+
+      if (error) {
+        console.error('Error upserting base price:', error);
+        throw error;
+      }
+
+      // Invalidate cache
+      this.clearCache();
+
+      console.log('✅ Base price upserted successfully:', data);
+      return data;
+    } catch (err) {
+      console.error('Error in upsertBasePrice:', err);
+      throw new Error(`Failed to save base price: ${err.message}`);
+    }
+  }
+
+  /**
+   * Delete base price (invalidates cache)
+   */
+  static async deleteBasePrice(priceId) {
+    try {
+      console.log('🗑️ Deactivating base price:', priceId);
+
+      const { data, error } = await supabase
+        .from(this.BASE_PRICES_TABLE)
+        .update({ 
+          is_active: false,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', priceId)
+        .select()
+        .single();
+
+      if (error) {
+        console.error('Error deactivating base price:', error);
+        throw error;
+      }
+
+      // Invalidate cache
+      this.clearCache();
+
+      console.log('✅ Base price deactivated successfully:', data);
+      return data;
+    } catch (err) {
+      console.error('Error in deleteBasePrice:', err);
+      throw new Error(`Failed to delete base price: ${err.message}`);
+    }
   }
 }
 

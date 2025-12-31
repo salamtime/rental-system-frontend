@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import TABLE_NAMES from '../config/tableNames';
 
 /**
  * BasePriceService - Manage base pricing for vehicle models
@@ -7,7 +8,8 @@ import { supabase } from '../lib/supabase';
  * of truth for rental form pricing calculations.
  */
 class BasePriceService {
-  static TABLE_NAME = 'app_8be2ccb1f0_base_prices';
+  static TABLE_NAME = TABLE_NAMES.BASE_PRICES;
+  static VEHICLE_MODELS_TABLE = TABLE_NAMES.VEHICLE_MODELS;
 
   /**
    * Get all base prices with vehicle model information
@@ -20,7 +22,7 @@ class BasePriceService {
         .from(this.TABLE_NAME)
         .select(`
           *,
-          vehicle_model:app_8be2ccb1f0_vehicle_models(
+          vehicle_model:${this.VEHICLE_MODELS_TABLE}(
             id,
             name,
             model,
@@ -54,7 +56,7 @@ class BasePriceService {
         .from(this.TABLE_NAME)
         .select(`
           *,
-          vehicle_model:app_8be2ccb1f0_vehicle_models(
+          vehicle_model:${this.VEHICLE_MODELS_TABLE}(
             id,
             name,
             model,
@@ -117,7 +119,7 @@ class BasePriceService {
         })
         .select(`
           *,
-          vehicle_model:app_8be2ccb1f0_vehicle_models(
+          vehicle_model:${this.VEHICLE_MODELS_TABLE}(
             id,
             name,
             model,
@@ -206,7 +208,7 @@ class BasePriceService {
       console.log('🔧 Loading all vehicle models...');
       
       const { data, error } = await supabase
-        .from('app_8be2ccb1f0_vehicle_models')
+        .from(this.VEHICLE_MODELS_TABLE)
         .select('id, name, model, vehicle_type')
         .order('name');
 

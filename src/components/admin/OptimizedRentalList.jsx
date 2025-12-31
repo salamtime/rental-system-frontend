@@ -11,6 +11,7 @@ import {
   Filter,
   ChevronLeft,
   ChevronRight,
+  Clock,
   Loader2,
   RefreshCw
 } from 'lucide-react';
@@ -166,6 +167,22 @@ const OptimizedRentalList = ({
 
   // =================== UTILITY FUNCTIONS ===================
   
+  // ✅ FIXED: Get display status - prioritize payment_status, fallback to rental_status
+  const getDisplayStatus = (rental) => {
+    // Priority 1: Use payment_status if it exists and is meaningful
+    if (rental.payment_status && rental.payment_status !== 'unknown') {
+      return rental.payment_status;
+    }
+    
+    // Priority 2: Use rental_status if it exists
+    if (rental.rental_status) {
+      return rental.rental_status;
+    }
+    
+    // Priority 3: Default to 'pending' only if both are null/empty
+    return 'pending';
+  };
+  
   const getStatusBadgeColor = (status) => {
     switch (status?.toLowerCase()) {
       case 'scheduled':
@@ -175,6 +192,14 @@ const OptimizedRentalList = ({
       case 'completed':
         return 'bg-gray-100 text-gray-800';
       case 'cancelled':
+        return 'bg-red-100 text-red-800';
+      case 'paid':
+        return 'bg-green-100 text-green-800';
+      case 'partial':
+        return 'bg-yellow-100 text-yellow-800';
+      case 'unpaid':
+        return 'bg-red-100 text-red-800';
+      case 'overdue':
         return 'bg-red-100 text-red-800';
       case 'pending':
         return 'bg-yellow-100 text-yellow-800';
@@ -198,6 +223,51 @@ const OptimizedRentalList = ({
   };
 
   // =================== RENDER METHODS ===================
+  // Calculate time remaining for active rentals
+  const calculateTimeRemaining = (rental) => {
+    if (rental.rental_status !== 'active') {
+      return null;
+    }
+    
+    const now = new Date();
+    const endDate = new Date(rental.rental_end_date);
+    
+    // For hourly rentals, include time
+    if (rental.rental_type === 'hourly' && rental.rental_end_time) {
+      const [hours, minutes] = rental.rental_end_time.split(':');
+      endDate.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+    } else {
+      // For daily rentals, set to end of day
+      endDate.setHours(23, 59, 59, 999);
+    }
+    
+    const diffMs = endDate - now;
+    
+    if (diffMs <= 0) {
+      return { text: 'Overdue', color: 'text-red-600', bgColor: 'bg-red-50' };
+    }
+    
+    const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+    const diffDays = Math.floor(diffHours / 24);
+    const remainingHours = diffHours % 24;
+    
+    if (diffDays > 0) {
+      const text = diffDays === 1 ? '1 day' : `${diffDays} days`;
+      return { 
+        text: remainingHours > 0 ? `${text} ${remainingHours}h` : text, 
+        color: diffDays <= 1 ? 'text-orange-600' : 'text-green-600',
+        bgColor: diffDays <= 1 ? 'bg-orange-50' : 'bg-green-50'
+      };
+    } else {
+      return { 
+        text: `${diffHours}h left`, 
+        color: diffHours <= 3 ? 'text-red-600' : 'text-orange-600',
+        bgColor: diffHours <= 3 ? 'bg-red-50' : 'bg-orange-50'
+      };
+    }
+  };
+
+
   
   const renderStatsCards = () => {
     if (!stats) return null;
@@ -434,51 +504,171 @@ const OptimizedRentalList = ({
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {rentals.map((rental) => (
-                    <tr key={rental.id} className="hover:bg-gray-50">
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="flex items-center">
-                          <div className="flex-shrink-0 h-10 w-10">
-                            <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
-                              <User className="h-5 w-5 text-blue-600" />
+                  {rentals.map((rental) => {
+                    const displayStatus = getDisplayStatus(rental);
+                    return (
+                      <tr key={rental.id} className="hover:bg-gray-50">
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="flex items-center">
+                            <div className="flex-shrink-0 h-10 w-10">
+                              <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
+                                <User className="h-5 w-5 text-blue-600" />
+                              </div>
+                            </div>
+                            <div className="ml-4">
+                              <div className="text-sm font-medium text-gray-900">
+                                {rental.customer_name || 'Unknown Customer'}
+                              </div>
+                              <div className="text-sm text-gray-500">
+                                {rental.customer_email || 'No email'}
+                              </div>
                             </div>
                           </div>
-                          <div className="ml-4">
-                            <div className="text-sm font-medium text-gray-900">
-                              {rental.customer_name || 'Unknown Customer'}
-                            </div>
-                            <div className="text-sm text-gray-500">
-                              {rental.customer_email || 'No email'}
-                            </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">
+                            {rental.vehicle?.name || 'Unknown Vehicle'}
                           </div>
+                          <div className="text-sm text-gray-500">
+                            {rental.vehicle?.plate_number || 'No plate'}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <div className="text-sm text-gray-900">
+                            {formatDate(rental.rental_start_date)}
+                          </div>
+                          <div className="text-sm text-gray-500">
+                            to {formatDate(rental.rental_end_date)}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap">
+                          <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadgeColor(displayStatus)}`}>
+                            {displayStatus}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                          {formatCurrency(rental.total_amount)}
+                        </td>
+                        <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                          <div className="flex items-center justify-end space-x-2">
+                            <button
+                              onClick={() => onView && onView(rental)}
+                              className="text-blue-600 hover:text-blue-900 p-1"
+                              title="View Details"
+                            >
+                              <Eye className="h-4 w-4" />
+                            </button>
+                            <button
+                              onClick={() => onEdit && onEdit(rental)}
+                              className="text-green-600 hover:text-green-900 p-1"
+                              title="Edit"
+                            >
+                              <Edit className="h-4 w-4" />
+                            </button>
+                            {rental.rental_status === 'scheduled' && onStartContract && (
+                              <button
+                                onClick={() => onStartContract(rental)}
+                                className="text-green-600 hover:text-green-900 p-1"
+                                title="Start Contract"
+                              >
+                                Start
+                              </button>
+                            )}
+                            {rental.rental_status === 'active' && onCloseContract && (
+                              <button
+                                onClick={() => onCloseContract(rental)}
+                                className="text-orange-600 hover:text-orange-900 p-1"
+                                title="Close Contract"
+                              >
+                                Close
+                              </button>
+                            )}
+                            <button
+                              onClick={() => onDelete && onDelete(rental)}
+                              className="text-red-600 hover:text-red-900 p-1"
+                              title="Delete"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Mobile Card View */}
+            <div className="block lg:hidden space-y-4 p-4">
+              {rentals.map((rental) => {
+                const displayStatus = getDisplayStatus(rental);
+                return (
+                  <div key={`mobile-${rental.id}`} className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center">
+                        <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center mr-3">
+                          <User className="h-4 w-4 text-blue-600" />
                         </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">
-                          {rental.vehicle?.name || 'Unknown Vehicle'}
+                        <div>
+                          <h3 className="text-sm font-medium text-gray-900">
+                            {rental.customer_name || 'Unknown Customer'}
+                          </h3>
+                          <p className="text-xs text-gray-500">
+                            {rental.customer_email || 'No email'}
+                          </p>
                         </div>
-                        <div className="text-sm text-gray-500">
-                          {rental.vehicle?.plate_number || 'No plate'}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <div className="text-sm text-gray-900">
-                          {formatDate(rental.rental_start_date)}
-                        </div>
-                        <div className="text-sm text-gray-500">
-                          to {formatDate(rental.rental_end_date)}
-                        </div>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadgeColor(rental.rental_status)}`}>
-                          {rental.rental_status || 'pending'}
+                      </div>
+                      <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadgeColor(displayStatus)}`}>
+                        {displayStatus}
+                      </span>
+                    </div>
+                    
+                    <div className="space-y-2 text-sm">
+                      <div className="flex items-center">
+                        <Car className="h-4 w-4 text-gray-400 mr-2" />
+                        <span className="text-gray-600">
+                          {rental.vehicle?.name || 'Unknown Vehicle'} - {rental.vehicle?.plate_number || 'No plate'}
                         </span>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                        {formatCurrency(rental.total_amount)}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                        <div className="flex items-center justify-end space-x-2">
+                      </div>
+                      
+                      <div className="flex items-center">
+                        <Calendar className="h-4 w-4 text-gray-400 mr-2" />
+                        <span className="text-gray-600">
+                          {formatDate(rental.rental_start_date)} - {formatDate(rental.rental_end_date)}
+                        </span>
+                      </div>
+                      
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center">
+                          <span className="text-xs text-gray-500 mr-2">Payment:</span>
+                          <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${
+                            rental.payment_status === 'paid' ? 'bg-green-100 text-green-800' :
+                            rental.payment_status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
+                            rental.payment_status === 'overdue' ? 'bg-red-100 text-red-800' :
+                            'bg-gray-100 text-gray-800'
+                          }`}>
+                            {rental.payment_status || 'unpaid'}
+                          </span>
+                        </div>
+                        {(() => {
+                          const timeRemaining = calculateTimeRemaining(rental);
+                          return timeRemaining ? (
+                            <div className={`flex items-center ${timeRemaining.bgColor} px-2 py-1 rounded-md`}>
+                              <Clock className={`h-3 w-3 ${timeRemaining.color} mr-1`} />
+                              <span className={`text-xs font-medium ${timeRemaining.color}`}>
+                                {timeRemaining.text}
+                              </span>
+                            </div>
+                          ) : null;
+                        })()}
+                      </div>
+                      
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-gray-900">
+                          {formatCurrency(rental.total_amount)}
+                        </span>
+                        <div className="flex items-center space-x-2">
                           <button
                             onClick={() => onView && onView(rental)}
                             className="text-blue-600 hover:text-blue-900 p-1"
@@ -493,24 +683,6 @@ const OptimizedRentalList = ({
                           >
                             <Edit className="h-4 w-4" />
                           </button>
-                          {rental.rental_status === 'scheduled' && onStartContract && (
-                            <button
-                              onClick={() => onStartContract(rental)}
-                              className="text-green-600 hover:text-green-900 p-1"
-                              title="Start Contract"
-                            >
-                              Start
-                            </button>
-                          )}
-                          {rental.rental_status === 'active' && onCloseContract && (
-                            <button
-                              onClick={() => onCloseContract(rental)}
-                              className="text-orange-600 hover:text-orange-900 p-1"
-                              title="Close Contract"
-                            >
-                              Close
-                            </button>
-                          )}
                           <button
                             onClick={() => onDelete && onDelete(rental)}
                             className="text-red-600 hover:text-red-900 p-1"
@@ -519,82 +691,11 @@ const OptimizedRentalList = ({
                             <Trash2 className="h-4 w-4" />
                           </button>
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Mobile Card View */}
-            <div className="block lg:hidden space-y-4 p-4">
-              {rentals.map((rental) => (
-                <div key={`mobile-${rental.id}`} className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex items-center">
-                      <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center mr-3">
-                        <User className="h-4 w-4 text-blue-600" />
-                      </div>
-                      <div>
-                        <h3 className="text-sm font-medium text-gray-900">
-                          {rental.customer_name || 'Unknown Customer'}
-                        </h3>
-                        <p className="text-xs text-gray-500">
-                          {rental.customer_email || 'No email'}
-                        </p>
-                      </div>
-                    </div>
-                    <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${getStatusBadgeColor(rental.rental_status)}`}>
-                      {rental.rental_status || 'pending'}
-                    </span>
-                  </div>
-                  
-                  <div className="space-y-2 text-sm">
-                    <div className="flex items-center">
-                      <Car className="h-4 w-4 text-gray-400 mr-2" />
-                      <span className="text-gray-600">
-                        {rental.vehicle?.name || 'Unknown Vehicle'} - {rental.vehicle?.plate_number || 'No plate'}
-                      </span>
-                    </div>
-                    
-                    <div className="flex items-center">
-                      <Calendar className="h-4 w-4 text-gray-400 mr-2" />
-                      <span className="text-gray-600">
-                        {formatDate(rental.rental_start_date)} - {formatDate(rental.rental_end_date)}
-                      </span>
-                    </div>
-                    
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium text-gray-900">
-                        {formatCurrency(rental.total_amount)}
-                      </span>
-                      <div className="flex items-center space-x-2">
-                        <button
-                          onClick={() => onView && onView(rental)}
-                          className="text-blue-600 hover:text-blue-900 p-1"
-                          title="View Details"
-                        >
-                          <Eye className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => onEdit && onEdit(rental)}
-                          className="text-green-600 hover:text-green-900 p-1"
-                          title="Edit"
-                        >
-                          <Edit className="h-4 w-4" />
-                        </button>
-                        <button
-                          onClick={() => onDelete && onDelete(rental)}
-                          className="text-red-600 hover:text-red-900 p-1"
-                          title="Delete"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </>
         )}

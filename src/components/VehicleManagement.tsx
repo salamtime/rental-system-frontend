@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
-import { Plus, Edit, Trash2, Search, Filter, Car, Fuel, Calendar, AlertTriangle, X, FileText, Gauge, Wrench, Shield, Image as ImageIcon, StickyNote, File, Clock, CheckCircle, AlertCircle, DollarSign, LayoutGrid, List } from 'lucide-react';
+import { Plus, Edit, Trash2, Search, Filter, Car, Fuel, Calendar, AlertTriangle, X, FileText, Gauge, Wrench, Shield, Image as ImageIcon, StickyNote, File, Clock, CheckCircle, AlertCircle, DollarSign, LayoutGrid, List, RefreshCw } from 'lucide-react';
 import VehicleModelService from '../services/VehicleModelService';
 import VehicleModelMigrationRunner from './VehicleModelMigrationRunner';
 import SegwayCleanupRunner from './SegwayCleanupRunner';
@@ -139,7 +139,7 @@ const VehicleManagement: React.FC = () => {
   const [showAddForm, setShowAddForm] = useState(false);
   const [editingVehicle, setEditingVehicle] = useState<Vehicle | null>(null);
   const [viewingVehicle, setViewingVehicle] = useState<Vehicle | null>(null);
-  const [activeTab, setActiveTab] = useState<'vehicles' | 'models' | 'fuel' | 'maintenance'>('vehicles');
+  const [activeTab, setActiveTab] = useState<'vehicles' | 'models' | 'fuel' | 'maintenance' | 'out_of_service'>('vehicles');
   const [deletingModelId, setDeletingModelId] = useState<string | null>(null);
   const [showAddModelForm, setShowAddModelForm] = useState(false);
   const [modelFormData, setModelFormData] = useState({
@@ -175,6 +175,11 @@ const VehicleManagement: React.FC = () => {
     next_oil_change_odometer: ''
   });
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+
+  // Out of Service tab filters
+  const [oosSearchTerm, setOosSearchTerm] = useState('');
+  const [oosModelFilter, setOosModelFilter] = useState<string>('all');
+  const [oosTypeFilter, setOosTypeFilter] = useState<string>('all');
 
   const getEmptyFormData = () => ({
     name: '',
@@ -484,7 +489,7 @@ const VehicleManagement: React.FC = () => {
       const [vehiclesResult, modelsResult] = await Promise.allSettled([
         supabase
           .from(TBL.VEHICLES)
-          .select('id, name, model, vehicle_type, power_cc, capacity, color, status, image_url, plate_number, current_odometer, engine_hours, next_oil_change_due, next_oil_change_odometer, last_oil_change_odometer, last_oil_change_date, created_at, registration_number, registration_expiry_date, insurance_policy_number, insurance_provider, insurance_expiry_date, purchase_cost_mad, purchase_date, purchase_supplier, purchase_invoice_url')
+          .select('id, name, model, vehicle_type, power_cc, capacity, color, status, image_url, plate_number, current_odometer, engine_hours, next_oil_change_due, next_oil_change_odometer, last_oil_change_odometer, last_oil_change_date, created_at, updated_at, registration_number, registration_expiry_date, insurance_policy_number, insurance_provider, insurance_expiry_date, purchase_cost_mad, purchase_date, purchase_supplier, purchase_invoice_url, general_notes, notes')
           .order('created_at', { ascending: false })
           .limit(50),
         
@@ -715,6 +720,31 @@ const VehicleManagement: React.FC = () => {
       ));
     } catch (error) {
       console.error('Error updating vehicle status:', error);
+    }
+  };
+
+  // Return vehicle to service handler
+  const handleReturnToService = async (vehicle: Vehicle) => {
+    if (!window.confirm(`Are you sure you want to return "${vehicle.name}" (${vehicle.plate_number}) to service?`)) {
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from(TBL.VEHICLES)
+        .update({ 
+          status: 'available',
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', vehicle.id);
+
+      if (error) throw error;
+
+      alert(`${vehicle.name} has been returned to service successfully!`);
+      await fetchData();
+    } catch (error) {
+      console.error('Error returning vehicle to service:', error);
+      alert(`Failed to return vehicle to service: ${error.message}`);
     }
   };
 
@@ -1153,6 +1183,29 @@ const VehicleManagement: React.FC = () => {
     return matchesSearch && matchesStatus && matchesType;
   });
 
+  // Filter out of service vehicles
+  const outOfServiceVehicles = vehicles.filter(vehicle => {
+    if (vehicle.status !== 'out_of_service') return false;
+
+    const matchesSearch = vehicle.name.toLowerCase().includes(oosSearchTerm.toLowerCase()) ||
+                         vehicle.plate_number.toLowerCase().includes(oosSearchTerm.toLowerCase()) ||
+                         vehicle.registration_number.toLowerCase().includes(oosSearchTerm.toLowerCase());
+    
+    const matchesModel = oosModelFilter === 'all' || vehicle.model.toLowerCase().includes(oosModelFilter.toLowerCase());
+    const matchesType = oosTypeFilter === 'all' || vehicle.vehicle_type === oosTypeFilter;
+    
+    return matchesSearch && matchesModel && matchesType;
+  });
+
+  // Calculate how long vehicle has been out of service
+  const getDaysOutOfService = (vehicle: Vehicle) => {
+    const updatedDate = new Date(vehicle.updated_at);
+    const today = new Date();
+    const diffTime = Math.abs(today.getTime() - updatedDate.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    return diffDays;
+  };
+
   if (loading) {
     return (
       <div className="p-6">
@@ -1163,7 +1216,7 @@ const VehicleManagement: React.FC = () => {
 
         <div className="border-b border-gray-200 mb-6">
           <nav className="-mb-px flex space-x-8">
-            {Array.from({ length: 4 }).map((_, index) => (
+            {Array.from({ length: 5 }).map((_, index) => (
               <div key={index} className="animate-pulse py-2 px-1 border-b-2 border-transparent">
                 <div className="h-6 bg-gray-200 rounded w-24"></div>
               </div>
@@ -1282,6 +1335,17 @@ const VehicleManagement: React.FC = () => {
             <Wrench className="inline-block w-4 h-4 mr-2" />
             Maintenance Records ({maintenanceRecords.length})
           </button>
+          <button
+            onClick={() => setActiveTab('out_of_service')}
+            className={`py-2 px-1 border-b-2 font-medium text-sm ${
+              activeTab === 'out_of_service'
+                ? 'border-red-500 text-red-600'
+                : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+            }`}
+          >
+            <AlertTriangle className="inline-block w-4 h-4 mr-2" />
+            Out of Service ({outOfServiceVehicles.length})
+          </button>
         </nav>
       </div>
 
@@ -1380,6 +1444,158 @@ const VehicleManagement: React.FC = () => {
             <div className="text-center py-12">
               <Car className="w-16 h-16 text-gray-400 mx-auto mb-4" />
               <p className="text-gray-500">No vehicles found matching your criteria</p>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Out of Service Tab */}
+      {activeTab === 'out_of_service' && (
+        <>
+          {/* Filters */}
+          <div className="mb-6 flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+            <div className="flex flex-col sm:flex-row gap-4 flex-1">
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-4 h-4" />
+                <input
+                  type="text"
+                  placeholder="Search by plate, name, or registration..."
+                  value={oosSearchTerm}
+                  onChange={(e) => setOosSearchTerm(e.target.value)}
+                  className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent w-80"
+                />
+              </div>
+              
+              <div className="flex gap-2">
+                <select
+                  value={oosModelFilter}
+                  onChange={(e) => setOosModelFilter(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                >
+                  <option value="all">All Models</option>
+                  {[...new Set(vehicles.filter(v => v.status === 'out_of_service').map(v => v.model))].map(model => (
+                    <option key={model} value={model}>{model}</option>
+                  ))}
+                </select>
+                
+                <select
+                  value={oosTypeFilter}
+                  onChange={(e) => setOosTypeFilter(e.target.value)}
+                  className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
+                >
+                  <option value="all">All Types</option>
+                  <option value="quad">Quad</option>
+                  <option value="ATV">ATV</option>
+                  <option value="motorcycle">Motorcycle</option>
+                </select>
+              </div>
+            </div>
+            
+            <button
+              onClick={fetchData}
+              className="bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-lg flex items-center gap-2 transition-colors"
+              title="Refresh"
+            >
+              <RefreshCw className="w-4 h-4" />
+              Refresh
+            </button>
+          </div>
+
+          {/* Out of Service Vehicles Grid */}
+          {outOfServiceVehicles.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {outOfServiceVehicles.map((vehicle) => {
+                const daysOutOfService = getDaysOutOfService(vehicle);
+                return (
+                  <div key={vehicle.id} className="bg-white rounded-lg shadow-md border-2 border-red-200 overflow-hidden hover:shadow-lg transition-shadow">
+                    {/* Vehicle Image */}
+                    <div className="h-48 bg-gray-200 relative">
+                      {vehicle.image_url ? (
+                        <img 
+                          src={vehicle.image_url} 
+                          alt={vehicle.name}
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center">
+                          <Car className="w-16 h-16 text-gray-400" />
+                        </div>
+                      )}
+                      <div className="absolute top-2 right-2">
+                        <span className="bg-red-600 text-white px-3 py-1 rounded-full text-xs font-semibold">
+                          Out of Service
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Vehicle Info */}
+                    <div className="p-4">
+                      <div className="flex items-start justify-between mb-2">
+                        <div>
+                          <h3 className="text-lg font-semibold text-gray-900">{vehicle.name}</h3>
+                          <p className="text-sm text-gray-600">{vehicle.model}</p>
+                        </div>
+                      </div>
+
+                      <div className="space-y-2 text-sm text-gray-600 mb-4">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">Plate:</span>
+                          <span>{vehicle.plate_number}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">Type:</span>
+                          <span className="capitalize">{vehicle.vehicle_type}</span>
+                        </div>
+                        {vehicle.registration_number && (
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">Registration:</span>
+                            <span>{vehicle.registration_number}</span>
+                          </div>
+                        )}
+                        <div className="flex items-center gap-2">
+                          <Clock className="w-4 h-4 text-red-600" />
+                          <span className="text-red-600 font-medium">
+                            {daysOutOfService} {daysOutOfService === 1 ? 'day' : 'days'} out of service
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Reason for out of service */}
+                      {(vehicle.general_notes || vehicle.notes) && (
+                        <div className="mb-4 p-3 bg-red-50 rounded-lg border border-red-100">
+                          <p className="text-xs font-medium text-red-800 mb-1">Reason:</p>
+                          <p className="text-sm text-red-700">
+                            {vehicle.general_notes || vehicle.notes}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Action Buttons */}
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleView(vehicle)}
+                          className="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-lg text-sm font-medium transition-colors"
+                        >
+                          View Details
+                        </button>
+                        <button
+                          onClick={() => handleReturnToService(vehicle)}
+                          className="flex-1 bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-1"
+                        >
+                          <CheckCircle className="w-4 h-4" />
+                          Return to Service
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-12 bg-white rounded-lg border-2 border-dashed border-gray-300">
+              <CheckCircle className="w-16 h-16 text-green-400 mx-auto mb-4" />
+              <h3 className="text-lg font-semibold text-gray-900 mb-2">All Vehicles In Service</h3>
+              <p className="text-gray-500">No vehicles are currently out of service</p>
             </div>
           )}
         </>
@@ -1712,7 +1928,7 @@ const VehicleManagement: React.FC = () => {
         }}
       />
 
-      {/* Vehicle Modal */}
+      {/* Vehicle Modal - keeping existing implementation */}
       {showAddForm && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-lg shadow-xl max-w-6xl w-full max-h-screen overflow-y-auto">

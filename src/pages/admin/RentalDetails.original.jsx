@@ -135,7 +135,7 @@ export default function RentalDetails() {
         if (user) {
           // Fetch user profile from database to get role
           const { data: userProfile, error } = await supabase
-            .from('app_4c3a7a6153_users')
+            .from('app_b30c02e74da644baad4668e3587d86b1_users')
             .select('role, full_name')
             .eq('id', user.id)
             .single();

@@ -4,7 +4,6 @@ import { supabase } from '../../lib/supabase.js';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, LineChart, Line } from 'recharts';
 import { AlertCircle, Car, Users, Wrench, DollarSign, TrendingUp, TrendingDown, Clock, Plus } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext.jsx';
-import EnhancedStepperRentalForm from '../../components/admin/EnhancedStepperRentalForm';
 
 // Helper to format numbers (e.g., 1000 -> 1k)
 const formatNumber = (num) => {
@@ -155,7 +154,6 @@ const AdminDashboard = () => {
   const [utilizationData, setUtilizationData] = useState([]);
   const [recentBookings, setRecentBookings] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [showStepperForm, setShowStepperForm] = useState(false);
   const { user } = useAuth();
   const navigate = useNavigate();
 
@@ -264,10 +262,9 @@ const AdminDashboard = () => {
     fetchData();
   }, []);
 
-  const handleRentalCreated = () => {
-    setShowStepperForm(false);
-    // Refresh dashboard data without page reload
-    fetchData();
+  const handleCreateRental = () => {
+    console.log('🔵 Navigating to /admin/rentals with openForm state');
+    navigate('/admin/rentals', { state: { openForm: true } });
   };
 
   return (
@@ -281,7 +278,7 @@ const AdminDashboard = () => {
         
         {/* Desktop Button */}
         <button
-          onClick={() => setShowStepperForm(true)}
+          onClick={handleCreateRental}
           className="hidden sm:flex items-center gap-2 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 active:bg-blue-800 transition-colors shadow-md hover:shadow-lg font-medium"
         >
           <Plus className="w-5 h-5" />
@@ -291,7 +288,7 @@ const AdminDashboard = () => {
 
       {/* Mobile Floating Action Button */}
       <button
-        onClick={() => setShowStepperForm(true)}
+        onClick={handleCreateRental}
         className="sm:hidden fixed bottom-6 right-6 z-50 flex items-center gap-2 px-5 py-4 bg-blue-600 text-white rounded-full hover:bg-blue-700 active:bg-blue-800 transition-all shadow-lg hover:shadow-xl font-medium"
         aria-label="Create New Rental"
       >
@@ -309,14 +306,6 @@ const AdminDashboard = () => {
       <div className="mt-8">
         <RecentBookings bookings={recentBookings} loading={loading} />
       </div>
-
-      {/* Enhanced Stepper Rental Form Modal - FIXED PROPS */}
-      {showStepperForm && (
-        <EnhancedStepperRentalForm
-          onSuccess={handleRentalCreated}
-          onCancel={() => setShowStepperForm(false)}
-        />
-      )}
     </div>
   );
 };

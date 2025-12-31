@@ -288,6 +288,102 @@ class AppSettingsService {
       };
     }
   }
+
+  /**
+   * Get deposit settings - DATABASE FIRST, then defaults
+   */
+  static async getDepositSettings() {
+    try {
+      console.log('📡 [DATABASE] Loading deposit settings from app_settings table...');
+      
+      const { data, error } = await supabase
+        .from(this.SETTINGS_TABLE)
+        .select('deposit_low_risk_multiplier, deposit_medium_risk_multiplier, deposit_high_risk_multiplier')
+        .eq('id', this.DEFAULT_SETTINGS_ID)
+        .single();
+
+      if (error) {
+        console.warn('⚠️ Database query failed, using defaults:', error.message);
+        return this.getDefaultDepositSettings();
+      }
+
+      const settings = {
+        low_risk: Number(data.deposit_low_risk_multiplier) || 1,
+        medium_risk: Number(data.deposit_medium_risk_multiplier) || 2,
+        high_risk: Number(data.deposit_high_risk_multiplier) || 3
+      };
+
+      console.log('✅ [DATABASE] Loaded deposit settings:', settings);
+      return settings;
+
+    } catch (dbError) {
+      console.log('🔄 Database failed, using default deposit settings...');
+      return this.getDefaultDepositSettings();
+    }
+  }
+
+  /**
+   * Get default deposit settings
+   */
+  static getDefaultDepositSettings() {
+    return {
+      low_risk: 1,    // 1x rental price
+      medium_risk: 2, // 2x rental price
+      high_risk: 3    // 3x rental price
+    };
+  }
+
+  /**
+   * Calculate damage deposit based on rental price and risk level
+   */
+  static async calculateDamageDeposit(rentalPrice, riskLevel = 'medium') {
+    try {
+      const settings = await this.getDepositSettings();
+      const multiplier = settings[`${riskLevel}_risk`] || settings.medium_risk;
+      const deposit = Math.round(rentalPrice * multiplier);
+      
+      console.log(`💰 Calculated deposit: ${deposit} MAD (${rentalPrice} × ${multiplier})`);
+      return deposit;
+    } catch (error) {
+      console.error('❌ Error calculating deposit:', error);
+      // Fallback: 2x rental price
+      return Math.round(rentalPrice * 2);
+    }
+  }
+
+  /**
+   * Save deposit settings
+   */
+  static async saveDepositSettings(settings) {
+    try {
+      console.log('💾 [DATABASE] Saving deposit settings:', settings);
+
+      const { data, error } = await supabase
+        .from(this.SETTINGS_TABLE)
+        .upsert({
+          id: this.DEFAULT_SETTINGS_ID,
+          deposit_low_risk_multiplier: Number(settings.low_risk) || 1,
+          deposit_medium_risk_multiplier: Number(settings.medium_risk) || 2,
+          deposit_high_risk_multiplier: Number(settings.high_risk) || 3,
+          updated_at: new Date().toISOString()
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      console.log('✅ [DATABASE] Deposit settings saved');
+      return {
+        low_risk: Number(data.deposit_low_risk_multiplier),
+        medium_risk: Number(data.deposit_medium_risk_multiplier),
+        high_risk: Number(data.deposit_high_risk_multiplier)
+      };
+
+    } catch (error) {
+      console.error('❌ Error saving deposit settings:', error);
+      throw error;
+    }
+  }
 }
 
 export default AppSettingsService;

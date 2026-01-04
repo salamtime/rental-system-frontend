@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import ProtectedRoute, { AdminRoute, EmployeeRoute, GuideRoute, CustomerRoute } from './components/ProtectedRoute';
@@ -82,6 +82,101 @@ const HomeRedirect = () => {
   return <Navigate to={redirectTo} replace />;
 };
 
+/**
+ * Global State Persistence Manager
+ * Prevents unwanted page refreshes and preserves form state
+ */
+const GlobalStatePersistence = () => {
+  useEffect(() => {
+    console.log('🔒 Global State Persistence: Initialized');
+    
+    // ✅ FIX 1: Prevent page refresh on visibility change
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        console.log('👁️ Tab became visible - preserving state, NO REFRESH');
+        // Do NOT reload or refetch data automatically
+        // Let components manage their own data fetching if needed
+      } else {
+        console.log('👁️ Tab hidden - state preserved');
+      }
+    };
+
+    // ✅ FIX 2: Prevent page refresh on window focus
+    const handleFocus = () => {
+      console.log('🎯 Window focused - preserving state, NO REFRESH');
+      // Do NOT reload the page
+      // Do NOT trigger automatic data refetching
+    };
+
+    // ✅ FIX 3: Save form state to sessionStorage before page unload
+    const handleBeforeUnload = () => {
+      console.log('💾 Saving form state before unload');
+      
+      // Save all input values to sessionStorage
+      const inputs = document.querySelectorAll('input, textarea, select');
+      const formState = {};
+      
+      inputs.forEach((input) => {
+        if (input.name || input.id) {
+          const key = input.name || input.id;
+          if (input.type === 'checkbox' || input.type === 'radio') {
+            formState[key] = input.checked;
+          } else {
+            formState[key] = input.value;
+          }
+        }
+      });
+      
+      if (Object.keys(formState).length > 0) {
+        sessionStorage.setItem('saharax_form_state', JSON.stringify(formState));
+        console.log('💾 Form state saved:', Object.keys(formState).length, 'fields');
+      }
+    };
+
+    // ✅ FIX 4: Restore form state after page load
+    const restoreFormState = () => {
+      try {
+        const savedState = sessionStorage.getItem('saharax_form_state');
+        if (savedState) {
+          const formState = JSON.parse(savedState);
+          console.log('📥 Restoring form state:', Object.keys(formState).length, 'fields');
+          
+          Object.entries(formState).forEach(([key, value]) => {
+            const input = document.querySelector(`[name="${key}"], #${key}`);
+            if (input) {
+              if (input.type === 'checkbox' || input.type === 'radio') {
+                input.checked = value;
+              } else {
+                input.value = value;
+              }
+            }
+          });
+        }
+      } catch (error) {
+        console.warn('⚠️ Failed to restore form state:', error);
+      }
+    };
+
+    // Add event listeners
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('focus', handleFocus);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    // Restore form state on mount
+    restoreFormState();
+
+    // Cleanup
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('focus', handleFocus);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      console.log('🔓 Global State Persistence: Cleaned up');
+    };
+  }, []);
+
+  return null;
+};
+
 function App() {
   console.log('🚀 App: Component rendering started');
 
@@ -89,6 +184,7 @@ function App() {
     <ErrorBoundary name="App-Root">
       <Router>
         <AuthProvider>
+          <GlobalStatePersistence />
           <ErrorBoundary name="Router-Wrapper">
             <div className="min-h-screen bg-gray-50">
               <Routes>

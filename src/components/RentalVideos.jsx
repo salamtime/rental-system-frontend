@@ -3,7 +3,7 @@ import { supabase } from '../lib/supabase';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from './ui/dialog';
 import { 
   Video, 
   Play, 
@@ -17,7 +17,6 @@ import {
   Image as ImageIcon,
   RefreshCw
 } from 'lucide-react';
-import MobileVideoPlayer from './video/MobileVideoPlayer';
 
 const RentalVideos = ({ rental, onUpdate }) => {
   const [videos, setVideos] = useState([]);
@@ -27,6 +26,7 @@ const RentalVideos = ({ rental, onUpdate }) => {
   const [thumbnailStates, setThumbnailStates] = useState({});
   const [downloadingStates, setDownloadingStates] = useState({});
   const [retryCount, setRetryCount] = useState(0);
+  const [videoRetryCount, setVideoRetryCount] = useState(0);
 
   // Load videos for the rental with enhanced error handling
   useEffect(() => {
@@ -42,7 +42,6 @@ const RentalVideos = ({ rental, onUpdate }) => {
         
         console.log('📹 Loading videos for rental:', rental.id);
 
-        // Enhanced error handling for database queries
         const { data: mediaRecords, error: mediaError } = await supabase
           .from('app_2f7bf469b0_rental_media')
           .select('*')
@@ -56,92 +55,20 @@ const RentalVideos = ({ rental, onUpdate }) => {
         }
 
         if (mediaRecords && mediaRecords.length > 0) {
-          const videoItems = [];
-
-          for (const record of mediaRecords) {
-            try {
-              const bucket = record.phase === 'out' ? 'rental-media-opening' : 'rental-media-closing';
-              
-              // Enhanced URL handling with validation
-              let videoUrl = record.public_url;
-              let isUrlValid = false;
-
-              // Try to get signed URL with better error handling
-              try {
-                if (record.storage_path) {
-                  const { data: signedUrl, error: urlError } = await supabase.storage
-                    .from(bucket)
-                    .createSignedUrl(record.storage_path, 7200); // 2 hours expiry
-                  
-                  if (!urlError && signedUrl?.signedUrl) {
-                    // Validate the signed URL
-                    try {
-                      const response = await fetch(signedUrl.signedUrl, { 
-                        method: 'HEAD',
-                        mode: 'no-cors' // Avoid CORS issues for validation
-                      });
-                      videoUrl = signedUrl.signedUrl;
-                      isUrlValid = true;
-                    } catch (validationError) {
-                      console.warn('Signed URL validation failed, using public URL:', validationError);
-                      // Fall back to public URL
-                    }
-                  }
-                }
-              } catch (err) {
-                console.warn('Could not generate signed URL, using public URL:', err);
-              }
-
-              // Validate public URL if signed URL failed
-              if (!isUrlValid && videoUrl) {
-                try {
-                  const response = await fetch(videoUrl, { 
-                    method: 'HEAD',
-                    mode: 'no-cors'
-                  });
-                  isUrlValid = true;
-                } catch (validationError) {
-                  console.warn('Public URL validation failed:', validationError);
-                }
-              }
-
-              // Generate thumbnail URL if exists
-              let thumbnailUrl = null;
-              if (record.poster_url) {
-                try {
-                  const thumbnailPath = record.poster_url.split('/').pop();
-                  const { data: thumbnailSignedUrl, error: thumbnailUrlError } = await supabase.storage
-                    .from(bucket)
-                    .createSignedUrl(thumbnailPath, 7200);
-                  
-                  if (!thumbnailUrlError && thumbnailSignedUrl) {
-                    thumbnailUrl = thumbnailSignedUrl.signedUrl;
-                  }
-                } catch (err) {
-                  console.warn('Could not generate thumbnail signed URL:', err);
-                  thumbnailUrl = record.poster_url; // Fallback to direct URL
-                }
-              }
-
-              videoItems.push({
-                id: record.id,
-                type: 'video',
-                url: videoUrl,
-                thumbnailUrl: thumbnailUrl,
-                duration: record.duration || 0,
-                timestamp: record.created_at,
-                original_filename: record.original_filename,
-                file_size: record.file_size,
-                phase: record.phase,
-                poster_url: record.poster_url,
-                storage_path: record.storage_path,
-                isUrlValid: isUrlValid
-              });
-            } catch (recordError) {
-              console.warn('Error processing video record:', record.id, recordError);
-              // Continue with other records
-            }
-          }
+          const videoItems = mediaRecords.map(record => ({
+            id: record.id,
+            type: 'video',
+            url: record.public_url,
+            thumbnailUrl: record.poster_url,
+            duration: record.duration || 0,
+            timestamp: record.created_at,
+            original_filename: record.original_filename,
+            file_size: record.file_size,
+            phase: record.phase,
+            poster_url: record.poster_url,
+            storage_path: record.storage_path,
+            isUrlValid: !!record.public_url
+          }));
 
           console.log('📹 Videos loaded:', videoItems.length);
           setVideos(videoItems);
@@ -181,18 +108,16 @@ const RentalVideos = ({ rental, onUpdate }) => {
           console.warn('Thumbnail generation timeout for:', videoId);
           setThumbnailStates(prev => ({ ...prev, [videoId]: 'error' }));
           resolve(null);
-        }, 10000); // 10 second timeout
+        }, 10000);
         
         video.onloadedmetadata = () => {
           try {
             clearTimeout(timeout);
             
-            // Set canvas dimensions to maintain aspect ratio
             const aspectRatio = video.videoWidth / video.videoHeight;
-            canvas.width = 320; // Fixed width
-            canvas.height = 320 / aspectRatio; // Maintain aspect ratio
+            canvas.width = 320;
+            canvas.height = 320 / aspectRatio;
             
-            // Seek to 1 second or 10% of video duration for better frame
             const seekTime = Math.min(1, video.duration * 0.1);
             video.currentTime = seekTime;
           } catch (err) {
@@ -207,10 +132,7 @@ const RentalVideos = ({ rental, onUpdate }) => {
           try {
             clearTimeout(timeout);
             
-            // Draw video frame to canvas
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-            
-            // Convert to base64 thumbnail
             const thumbnailDataUrl = canvas.toDataURL('image/jpeg', 0.8);
             
             setThumbnailStates(prev => ({ ...prev, [videoId]: 'completed' }));
@@ -249,7 +171,6 @@ const RentalVideos = ({ rental, onUpdate }) => {
             const thumbnail = await generateThumbnailFromVideo(video.url, video.id);
             
             if (thumbnail) {
-              // Update video with generated thumbnail
               setVideos(prev => prev.map(v => 
                 v.id === video.id 
                   ? { ...v, generatedThumbnail: thumbnail }
@@ -268,24 +189,20 @@ const RentalVideos = ({ rental, onUpdate }) => {
     }
   }, [videos.length]);
 
-  // Enhanced download function with better error handling
   const handleDownloadVideo = async (video, event) => {
-    if (event) {
-      event.stopPropagation(); // Prevent video modal from opening
+    event?.stopPropagation();
+    
+    if (!video.url || !video.isUrlValid) {
+      setError('Video URL is not available for download');
+      return;
     }
-
+    
     try {
       setDownloadingStates(prev => ({ ...prev, [video.id]: true }));
       console.log('📥 Starting download for:', video.original_filename);
-
-      // Validate URL before attempting download
-      if (!video.isUrlValid) {
-        throw new Error('Video URL is not accessible');
-      }
-
-      // Method 1: Fetch and create blob URL (most reliable)
+      
       try {
-        console.log('📡 Fetching video as blob...');
+        console.log('🔄 Attempting blob download...');
         const response = await fetch(video.url, {
           method: 'GET',
           headers: {
@@ -300,17 +217,15 @@ const RentalVideos = ({ rental, onUpdate }) => {
         const blob = await response.blob();
         const blobUrl = URL.createObjectURL(blob);
         
-        // Create download link with blob URL
         const link = document.createElement('a');
         link.href = blobUrl;
-        link.download = video.original_filename || `rental_video_${video.id}.webm`;
+        link.download = video.original_filename || `rental_video_${video.id}.mp4`;
         link.style.display = 'none';
         
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         
-        // Clean up blob URL
         setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
         
         console.log('✅ Blob download completed successfully');
@@ -319,11 +234,10 @@ const RentalVideos = ({ rental, onUpdate }) => {
         console.warn('Blob download failed:', err);
       }
 
-      // Method 2: Direct download fallback
       try {
         const link = document.createElement('a');
         link.href = video.url;
-        link.download = video.original_filename || `rental_video_${video.id}.webm`;
+        link.download = video.original_filename || `rental_video_${video.id}.mp4`;
         link.target = '_blank';
         link.rel = 'noopener noreferrer';
         
@@ -337,7 +251,6 @@ const RentalVideos = ({ rental, onUpdate }) => {
         console.warn('Direct download failed:', err);
       }
 
-      // Method 3: Open in new tab as final fallback
       console.log('🔗 Opening video in new tab as fallback');
       window.open(video.url, '_blank', 'noopener,noreferrer');
       
@@ -355,13 +268,22 @@ const RentalVideos = ({ rental, onUpdate }) => {
       return;
     }
     
-    console.log('🎬 Opening video modal for:', video.original_filename);
-    setPlayingVideo(video);
+    const isMov = video.original_filename?.toLowerCase().endsWith('.mov');
+    
+    if (isMov) {
+      console.log('🎬 Opening .mov file in new tab for iOS compatibility:', video.original_filename);
+      window.open(video.url, '_blank');
+    } else {
+      console.log('🎬 Opening video modal for:', video.original_filename);
+      setPlayingVideo(video);
+      setVideoRetryCount(0);
+    }
   };
 
   const closeVideoModal = () => {
     console.log('🔒 Closing video modal');
     setPlayingVideo(null);
+    setVideoRetryCount(0);
   };
 
   const handleRetry = () => {
@@ -395,18 +317,28 @@ const RentalVideos = ({ rental, onUpdate }) => {
     return phase === 'out' ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800';
   };
 
-  // Thumbnail component with loading states
   const VideoThumbnail = ({ video }) => {
     const thumbnailSrc = video.thumbnailUrl || video.generatedThumbnail;
     const isGenerating = thumbnailStates[video.id] === 'generating';
     const hasError = thumbnailStates[video.id] === 'error';
 
     return (
-      <div className="relative aspect-video bg-gray-100 rounded-lg overflow-hidden group cursor-pointer">
+      <div 
+        className="relative aspect-video bg-gray-100 rounded-lg overflow-hidden group cursor-pointer"
+        role="button"
+        tabIndex={0}
+        aria-label={`Play ${getPhaseLabel(video.phase)} video: ${video.original_filename}`}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            handleVideoClick(video);
+          }
+        }}
+      >
         {thumbnailSrc && !isGenerating ? (
           <img
             src={thumbnailSrc}
-            alt="Video thumbnail"
+            alt={`${getPhaseLabel(video.phase)} video thumbnail for ${video.original_filename}`}
             className="w-full h-full object-cover transition-transform group-hover:scale-105"
             onError={() => {
               console.warn('Thumbnail failed to load for:', video.original_filename);
@@ -436,28 +368,24 @@ const RentalVideos = ({ rental, onUpdate }) => {
           </div>
         )}
         
-        {/* URL Status Indicator */}
         {!video.isUrlValid && (
           <div className="absolute top-2 right-2 bg-red-600 text-white px-2 py-1 rounded text-xs">
             URL Error
           </div>
         )}
         
-        {/* Play Button Overlay */}
         <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-30 flex items-center justify-center transition-all duration-200">
           <div className="bg-white bg-opacity-90 rounded-full p-3 transform scale-0 group-hover:scale-100 transition-transform duration-200">
             <Play className="w-6 h-6 text-gray-800 fill-current" />
           </div>
         </div>
         
-        {/* Duration Badge */}
         {video.duration > 0 && (
           <div className="absolute bottom-2 right-2 bg-black bg-opacity-70 text-white px-2 py-1 rounded text-xs font-medium">
             {formatDuration(video.duration)}
           </div>
         )}
         
-        {/* Phase Badge */}
         <div className="absolute top-2 left-2">
           <Badge className={getPhaseColor(video.phase)}>
             {getPhaseLabel(video.phase)}
@@ -548,75 +476,75 @@ const RentalVideos = ({ rental, onUpdate }) => {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {videos.map((video) => (
-                <div
-                  key={video.id}
-                  className="bg-white border border-gray-200 rounded-lg overflow-hidden hover:shadow-lg transition-shadow duration-200"
-                >
-                  {/* Video Thumbnail */}
-                  <div onClick={() => handleVideoClick(video)}>
-                    <VideoThumbnail video={video} />
-                  </div>
-                  
-                  {/* Video Info */}
-                  <div className="p-4">
-                    <h4 className="font-medium text-gray-900 truncate mb-2">
-                      {video.original_filename}
-                    </h4>
+              {videos.map((video) => {
+                const isMov = video.original_filename?.toLowerCase().endsWith('.mov');
+                
+                return (
+                  <div
+                    key={video.id}
+                    className="bg-white border border-gray-200 rounded-lg overflow-hidden hover:shadow-lg transition-shadow duration-200"
+                  >
+                    <div onClick={() => handleVideoClick(video)}>
+                      <VideoThumbnail video={video} />
+                    </div>
                     
-                    <div className="space-y-2 text-sm text-gray-600">
-                      <div className="flex items-center gap-2">
-                        <Calendar className="w-4 h-4" />
-                        <span>{formatTimestamp(video.timestamp)}</span>
+                    <div className="p-4">
+                      <h4 className="font-medium text-gray-900 truncate mb-2">
+                        {video.original_filename}
+                      </h4>
+                      
+                      <div className="space-y-2 text-sm text-gray-600">
+                        <div className="flex items-center gap-2">
+                          <Calendar className="w-4 h-4" />
+                          <span>{formatTimestamp(video.timestamp)}</span>
+                        </div>
+                        
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <Clock className="w-4 h-4" />
+                            <span>{formatDuration(video.duration)}</span>
+                          </div>
+                          <span className="text-gray-500">
+                            {formatFileSize(video.file_size)}
+                          </span>
+                        </div>
                       </div>
                       
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Clock className="w-4 h-4" />
-                          <span>{formatDuration(video.duration)}</span>
-                        </div>
-                        <span className="text-gray-500">
-                          {formatFileSize(video.file_size)}
-                        </span>
+                      <div className="flex gap-2 mt-4">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleVideoClick(video)}
+                          className="flex-1"
+                          disabled={!video.isUrlValid}
+                        >
+                          <Play className="w-4 h-4 mr-2" />
+                          {isMov ? 'View' : 'Play'}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={(e) => handleDownloadVideo(video, e)}
+                          disabled={downloadingStates[video.id] || !video.isUrlValid}
+                          className="min-w-[44px]"
+                          title="Download video"
+                        >
+                          {downloadingStates[video.id] ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Download className="w-4 h-4" />
+                          )}
+                        </Button>
                       </div>
                     </div>
-                    
-                    {/* Action Buttons */}
-                    <div className="flex gap-2 mt-4">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleVideoClick(video)}
-                        className="flex-1"
-                        disabled={!video.isUrlValid}
-                      >
-                        <Play className="w-4 h-4 mr-2" />
-                        Play
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={(e) => handleDownloadVideo(video, e)}
-                        disabled={downloadingStates[video.id] || !video.isUrlValid}
-                        className="min-w-[44px]"
-                        title="Download video"
-                      >
-                        {downloadingStates[video.id] ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Download className="w-4 h-4" />
-                        )}
-                      </Button>
-                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </CardContent>
       </Card>
 
-      {/* Video Modal with Enhanced Player */}
       {playingVideo && (
         <Dialog open={!!playingVideo} onOpenChange={(open) => !open && closeVideoModal()}>
           <DialogContent className="max-w-4xl max-h-[90vh] p-0">
@@ -631,29 +559,57 @@ const RentalVideos = ({ rental, onUpdate }) => {
                   size="sm"
                   onClick={closeVideoModal}
                   className="h-8 w-8 p-0"
+                  aria-label="Close video player"
                 >
                   <X className="w-4 h-4" />
                 </Button>
               </div>
+              <DialogDescription>
+                Video player for {playingVideo.original_filename}. {getPhaseLabel(playingVideo.phase)} vehicle condition recording.
+              </DialogDescription>
             </DialogHeader>
             
             <div className="p-4">
-              {/* Enhanced Mobile Video Player */}
-              <MobileVideoPlayer
-                src={playingVideo.url}
-                poster={playingVideo.thumbnailUrl || playingVideo.generatedThumbnail}
-                title={playingVideo.original_filename}
-                onClose={closeVideoModal}
-                onError={(error) => {
-                  console.error('Video player error:', error);
-                  setError(`Video playback failed: ${error.message}`);
-                }}
-                onLoadSuccess={(metadata) => {
-                  console.log('Video loaded successfully:', metadata);
-                }}
-              />
+              <div className="relative bg-black rounded-lg overflow-hidden mb-4">
+                <video
+                  key={`${playingVideo.id}-${videoRetryCount}`}
+                  controls
+                  autoPlay
+                  playsInline
+                  className="w-full max-h-[60vh]"
+                  poster={playingVideo.thumbnailUrl || playingVideo.generatedThumbnail}
+                  aria-label={`${getPhaseLabel(playingVideo.phase)} vehicle condition video`}
+                  onError={(e) => {
+                    console.error('❌ Video playback error:', e);
+                    
+                    if (videoRetryCount < 3) {
+                      setTimeout(() => {
+                        console.log(`🔄 Retrying video load (attempt ${videoRetryCount + 1}/3)...`);
+                        setVideoRetryCount(prev => prev + 1);
+                      }, 1500);
+                    } else {
+                      setError(`Video playback failed after 3 attempts. The video may be corrupted or the format is not supported.`);
+                    }
+                  }}
+                  onLoadStart={() => {
+                    console.log('📹 Video loading started...');
+                  }}
+                  onLoadedData={() => {
+                    console.log('✅ Video loaded successfully');
+                  }}
+                >
+                  <source src={`${playingVideo.url}?t=${Date.now()}`} type="video/mp4" />
+                  <source src={`${playingVideo.url}?t=${Date.now()}`} type="video/webm" />
+                  Your browser does not support the video tag.
+                </video>
+                
+                {videoRetryCount > 0 && videoRetryCount < 3 && (
+                  <div className="absolute top-4 right-4 bg-yellow-600 text-white px-3 py-1 rounded text-sm">
+                    Retrying... ({videoRetryCount}/3)
+                  </div>
+                )}
+              </div>
               
-              {/* Video Details */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm mt-4">
                 <div>
                   <h4 className="font-medium text-gray-900 mb-2">Video Details</h4>
@@ -696,7 +652,6 @@ const RentalVideos = ({ rental, onUpdate }) => {
                 </div>
               </div>
               
-              {/* Action Buttons */}
               <div className="flex justify-end gap-2 mt-4 pt-4 border-t">
                 <Button
                   variant="outline"

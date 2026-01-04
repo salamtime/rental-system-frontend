@@ -14,8 +14,7 @@ class ExtensionPricingService {
    */
   static async calculateExtensionPrice(rentalId, extensionHours) {
     try {
-      console.log('🧮 Calculating extension price for rental', rentalId, 'with', extensionHours, 'hours');
-      console.log('🔍 Parameter types:', typeof rentalId, typeof extensionHours);
+      console.log(`🧮 Calculating extension price for rental ${rentalId} with ${extensionHours} hours`);
 
       // Validate parameters
       if (!rentalId) {
@@ -27,207 +26,184 @@ class ExtensionPricingService {
         throw new Error(`Invalid extension hours: ${extensionHours}`);
       }
 
-      // First, try to use the database function if it exists
-      try {
-        const { data, error } = await supabase.rpc('calculate_extension_price', {
-          p_extension_hours: hoursNum,  // FIXED: Correct parameter order
-          p_rental_id: rentalId
-        });
-
-        if (error) {
-          console.error('❌ Database calculation error:', error);
-          throw error;
-        }
-
-        if (data) {
-          console.log('✅ Database calculation successful:', data);
-          return data;
-        }
-      } catch (dbError) {
-        console.error('❌ Database function not available:', dbError.message);
-        console.log('⚠️ Using fallback calculation method');
-      }
-
-      // Fallback: Calculate manually using existing pricing rules
-      return await this.calculateExtensionPriceFallback(rentalId, hoursNum);
-      
-    } catch (error) {
-      console.error('❌ Error calculating extension price:', error);
-      throw new Error(`Failed to calculate extension price: ${error.message}`);
-    }
-  }
-
-  /**
-   * Fallback calculation method using existing pricing rules
-   */
-  static async calculateExtensionPriceFallback(rentalId, extensionHours) {
-    try {
-      console.log('🔄 Starting fallback calculation for rental:', rentalId, 'hours:', extensionHours);
-
-      // Get rental details with vehicle information
+      // 1. Get rental with ALL related data including vehicle model and base price
       const { data: rental, error: rentalError } = await supabase
         .from('app_4c3a7a6153_rentals')
         .select(`
           *,
-          vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(*)
+          vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(
+            *,
+            vehicle_model:saharax_0u4w4d_vehicle_models(*)
+          )
         `)
         .eq('id', rentalId)
         .single();
-
-      if (rentalError) {
-        console.error('❌ Error fetching rental:', rentalError);
-        throw rentalError;
-      }
       
-      if (!rental) {
-        throw new Error('Rental not found');
-      }
-
-      console.log('✅ Rental found:', {
-        id: rental.id,
-        vehicle_id: rental.vehicle_id,
-        start: rental.rental_start_date,
-        end: rental.rental_end_date,
-        total: rental.total_amount
+      if (rentalError) throw rentalError;
+      
+      console.log('🔍 Rental data for pricing:', {
+        rentalId: rental.id,
+        vehicleId: rental.vehicle_id,
+        vehicleModelId: rental.vehicle?.vehicle_model_id,
+        vehicleModel: rental.vehicle?.vehicle_model
       });
 
-      // Get vehicle pricing
-      const vehicleId = rental.vehicle_id;
-      const baseHourlyRate = rental.vehicle?.hourly_rate || rental.vehicle?.price_per_hour || 100;
-
-      console.log('💰 Base hourly rate:', baseHourlyRate);
-
-      // Check if tiered pricing exists
-      const { data: pricingRules, error: pricingError } = await supabase
-        .from('app_4c3a7a6153_pricing_rules')
+      // 2. Get base price for this vehicle model
+      const { data: basePrice, error: basePriceError } = await supabase
+        .from('app_4c3a7a6153_base_prices')
         .select('*')
-        .eq('vehicle_id', vehicleId)
-        .eq('rental_type', 'hourly')
-        .order('min_hours', { ascending: true });
+        .eq('vehicle_model_id', rental.vehicle?.vehicle_model_id)
+        .eq('is_active', true)
+        .single();
 
-      if (pricingError) {
-        console.warn('⚠️ Error fetching pricing rules:', pricingError.message);
+      if (basePriceError || !basePrice) {
+        console.warn('⚠️ No base price found for this vehicle model');
+        return {
+          totalPrice: 0,
+          extension_price: 0,
+          message: "No pricing configured for this vehicle model",
+          requires_manual_entry: true,
+          error_code: 'NO_BASE_PRICE'
+        };
       }
 
-      console.log('📊 Pricing rules found:', pricingRules?.length || 0);
-
-      let totalPrice = 0;
+      console.log('💰 Base price found:', {
+        basePriceId: basePrice.id,
+        hourlyPrice: basePrice.hourly_price,
+        priceSource: basePrice.price_source
+      });
+      
+      // 3. Get the hourly rate from base price
+      const hourlyRate = basePrice.hourly_price;
+      
+      if (!hourlyRate || hourlyRate <= 0) {
+        console.warn('⚠️ No hourly rate configured');
+        return {
+          totalPrice: 0,
+          extension_price: 0,
+          message: "Hourly rate not configured for this vehicle",
+          requires_manual_entry: true,
+          error_code: 'NO_HOURLY_RATE'
+        };
+      }
+      
+      // 4. Check for pricing tiers
+      let finalHourlyRate = hourlyRate;
       let tierBreakdown = [];
+      let appliedTier = null;
+      
+      try {
+        const { data: pricingTiers, error: tiersError } = await supabase
+          .from('app_4c3a7a6153_pricing_tiers')
+          .select('*')
+          .eq('vehicle_model_id', rental.vehicle?.vehicle_model_id)
+          .eq('is_active', true)
+          .lte('min_hours', hoursNum)
+          .order('min_hours', { ascending: false });
+        
+        if (!tiersError && pricingTiers && pricingTiers.length > 0) {
+          // Find the best matching tier
+          for (const tier of pricingTiers) {
+            if (hoursNum >= tier.min_hours && (!tier.max_hours || hoursNum <= tier.max_hours)) {
+              appliedTier = tier;
+              break;
+            }
+          }
 
-      // Calculate current rental duration
-      const startDate = new Date(rental.rental_start_date);
-      const endDate = new Date(rental.rental_end_date);
-      const currentDuration = Math.round((endDate - startDate) / (1000 * 60 * 60));
-
-      console.log('⏱️ Current duration:', currentDuration, 'hours');
-
-      if (!pricingError && pricingRules && pricingRules.length > 0) {
-        // Use tiered pricing
-        console.log('🎯 Using tiered pricing calculation');
-        let remainingHours = extensionHours;
-        let totalHoursSoFar = currentDuration;
-
-        for (const rule of pricingRules) {
-          if (remainingHours <= 0) break;
-
-          const tierStart = rule.min_hours;
-          const tierEnd = rule.max_hours || Infinity;
-          
-          console.log(`📍 Checking tier: ${tierStart}-${tierEnd} hours`);
-          
-          // Calculate how many hours fall into this tier
-          let hoursInThisTier = 0;
-          
-          if (totalHoursSoFar < tierEnd) {
-            const hoursAvailableInTier = tierEnd - Math.max(totalHoursSoFar, tierStart);
-            hoursInThisTier = Math.min(remainingHours, hoursAvailableInTier);
+          if (appliedTier) {
+            console.log('✅ Found pricing tier:', appliedTier);
             
-            if (hoursInThisTier > 0) {
-              const ratePerHour = rule.price_per_hour || baseHourlyRate;
-              const discountMultiplier = 1 - (rule.discount_percentage || 0) / 100;
-              const effectiveRate = ratePerHour * discountMultiplier;
-              const tierTotal = hoursInThisTier * effectiveRate;
-
-              console.log(`  ✓ ${hoursInThisTier}h @ MAD ${effectiveRate}/h = MAD ${tierTotal}`);
-
+            if (appliedTier.calculation_method === 'percentage' && appliedTier.discount_percentage) {
+              // Apply percentage discount
+              const discount = appliedTier.discount_percentage / 100;
+              finalHourlyRate = hourlyRate * (1 - discount);
+              
               tierBreakdown.push({
-                hours: hoursInThisTier,
-                rate: Math.round(effectiveRate),
-                discount: rule.discount_percentage || 0,
-                subtotal: Math.round(tierTotal)
+                hours: hoursNum,
+                rate: Math.round(finalHourlyRate),
+                discount: appliedTier.discount_percentage,
+                subtotal: Math.round(finalHourlyRate * hoursNum)
               });
-
-              totalPrice += tierTotal;
-              remainingHours -= hoursInThisTier;
-              totalHoursSoFar += hoursInThisTier;
+            } else if (appliedTier.calculation_method === 'fixed') {
+              // Use fixed price
+              finalHourlyRate = appliedTier.price_amount;
+              
+              tierBreakdown.push({
+                hours: hoursNum,
+                rate: Math.round(finalHourlyRate),
+                discount: 0,
+                subtotal: Math.round(finalHourlyRate * hoursNum)
+              });
             }
           }
         }
-
-        // If there are still remaining hours, use the last tier's rate
-        if (remainingHours > 0) {
-          console.log(`⚠️ ${remainingHours} hours remaining, using last tier rate`);
-          const lastRule = pricingRules[pricingRules.length - 1];
-          const ratePerHour = lastRule.price_per_hour || baseHourlyRate;
-          const discountMultiplier = 1 - (lastRule.discount_percentage || 0) / 100;
-          const effectiveRate = ratePerHour * discountMultiplier;
-          const tierTotal = remainingHours * effectiveRate;
-
-          tierBreakdown.push({
-            hours: remainingHours,
-            rate: Math.round(effectiveRate),
-            discount: lastRule.discount_percentage || 0,
-            subtotal: Math.round(tierTotal)
-          });
-
-          totalPrice += tierTotal;
-        }
-      } else {
-        // No tiered pricing, use flat rate
-        console.log('📊 Using flat rate calculation');
-        totalPrice = extensionHours * baseHourlyRate;
-        tierBreakdown = [{
-          hours: extensionHours,
-          rate: baseHourlyRate,
-          discount: 0,
-          subtotal: Math.round(totalPrice)
-        }];
+      } catch (tierError) {
+        console.log('⚠️ No pricing tiers found, using base rate:', tierError.message);
       }
 
+      // If no tier was applied, use base rate
+      if (!appliedTier) {
+        tierBreakdown.push({
+          hours: hoursNum,
+          rate: Math.round(hourlyRate),
+          discount: 0,
+          subtotal: Math.round(hourlyRate * hoursNum)
+        });
+      }
+      
+      // 5. Calculate total price
+      const totalPrice = finalHourlyRate * hoursNum;
+      
       // Calculate new end date
-      const newEndDate = new Date(rental.rental_end_date);
-      newEndDate.setHours(newEndDate.getHours() + extensionHours);
+      const currentEndDate = new Date(rental.rental_end_date);
+      const newEndDate = new Date(currentEndDate.getTime() + (hoursNum * 60 * 60 * 1000));
 
       // Calculate savings
-      const fullPriceTotal = extensionHours * baseHourlyRate;
+      const fullPriceTotal = hoursNum * hourlyRate;
       const totalSavings = fullPriceTotal - totalPrice;
-
-      const result = {
+      
+      console.log('💰 Final price calculation:', {
+        baseHourlyRate: hourlyRate,
+        finalHourlyRate: finalHourlyRate,
+        hours: hoursNum,
+        totalPrice: totalPrice,
+        source: basePrice.price_source || 'base',
+        appliedTier: appliedTier ? `${appliedTier.min_hours}-${appliedTier.max_hours || '∞'}h` : 'none'
+      });
+      
+      return {
         totalPrice: Math.round(totalPrice),
-        extension_price: Math.round(totalPrice),  // Add this for compatibility
-        averageHourlyRate: Math.round(totalPrice / extensionHours),
+        extension_price: Math.round(totalPrice),
+        averageHourlyRate: Math.round(totalPrice / hoursNum),
+        hourly_rate: Math.round(finalHourlyRate),
         tierBreakdown,
         newEndDate: newEndDate.toISOString(),
         totalSavings: Math.round(totalSavings),
-        currentHours: currentDuration,
-        extensionHours,
-        dynamicPricingEnabled: pricingRules && pricingRules.length > 0
+        extensionHours: hoursNum,
+        message: `Calculated at ${Math.round(finalHourlyRate)} MAD/hour (${hoursNum} hours)`,
+        requires_manual_entry: false,
+        source: 'auto_calculated',
+        dynamicPricingEnabled: !!appliedTier
       };
-
-      console.log('✅ Fallback calculation result:', result);
-
-      return result;
-
+      
     } catch (error) {
-      console.error('❌ Fallback calculation error:', error);
-      console.error('Error details:', {
-        message: error.message,
-        code: error.code,
-        details: error.details,
-        hint: error.hint
-      });
-      throw error;
+      console.error('❌ Error calculating extension price:', error);
+      return {
+        totalPrice: 0,
+        extension_price: 0,
+        message: `Error calculating price: ${error.message}`,
+        requires_manual_entry: true,
+        error_code: 'CALCULATION_ERROR'
+      };
     }
+  }
+
+  /**
+   * Fallback calculation method using existing pricing rules (DEPRECATED - kept for compatibility)
+   */
+  static async calculateExtensionPriceFallback(rentalId, extensionHours) {
+    console.warn('⚠️ Using deprecated fallback method, redirecting to main calculation');
+    return await this.calculateExtensionPrice(rentalId, extensionHours);
   }
 
   /**
@@ -270,7 +246,6 @@ class ExtensionPricingService {
     try {
       console.log('🔄 Updating rental with extension:', { rentalId, extensionHours, extensionPrice });
       
-      // Fetch current rental details
       const { data: rental, error: fetchError } = await supabase
         .from('app_4c3a7a6153_rentals')
         .select('*')
@@ -282,39 +257,53 @@ class ExtensionPricingService {
       console.log('📋 Current rental:', {
         id: rental.id,
         current_end: rental.rental_end_date,
-        current_total: rental.total_amount
+        current_total: rental.total_amount,
+        current_extension_price: rental.total_extension_price,
+        current_extension_count: rental.extension_count
       });
 
-      // Calculate new end date
       const currentEndDate = new Date(rental.rental_end_date);
       const newEndDate = new Date(currentEndDate.getTime() + (extensionHours * 60 * 60 * 1000));
 
       console.log('📅 New end date:', newEndDate.toISOString());
 
-      // Calculate new total amount
-      const currentTotal = parseFloat(rental.total_amount) || 0;
-      const newTotal = currentTotal + parseFloat(extensionPrice);
+      const currentExtensionPrice = parseFloat(rental.total_extension_price) || 0;
+      const newTotalExtensionPrice = currentExtensionPrice + parseFloat(extensionPrice);
+      
+      const currentExtensionCount = parseInt(rental.extension_count) || 0;
+      const newExtensionCount = currentExtensionCount + 1;
+      
+      const currentExtendedHours = parseFloat(rental.total_extended_hours) || 0;
+      const newTotalExtendedHours = currentExtendedHours + parseFloat(extensionHours);
+
+      const baseAmount = parseFloat(rental.unit_price || rental.total_amount) || 0;
+      const overageCharge = parseFloat(rental.overage_charge) || 0;
+      const newGrandTotal = baseAmount + overageCharge + newTotalExtensionPrice;
 
       console.log('💰 Price update:', {
-        current: currentTotal,
-        extension: extensionPrice,
-        new_total: newTotal
+        base: baseAmount,
+        overage: overageCharge,
+        previous_extensions: currentExtensionPrice,
+        new_extension: extensionPrice,
+        new_total_extensions: newTotalExtensionPrice,
+        new_grand_total: newGrandTotal
       });
 
-      // Update rental
       const { error: updateError } = await supabase
         .from('app_4c3a7a6153_rentals')
         .update({
           rental_end_date: newEndDate.toISOString(),
-          total_amount: newTotal,
-          remaining_amount: Math.max(0, newTotal - (parseFloat(rental.deposit_amount) || 0)),
+          total_extension_price: newTotalExtensionPrice,
+          extension_count: newExtensionCount,
+          total_extended_hours: newTotalExtendedHours,
+          remaining_amount: Math.max(0, newGrandTotal - (parseFloat(rental.deposit_amount) || 0)),
           updated_at: new Date().toISOString()
         })
         .eq('id', rentalId);
 
       if (updateError) throw updateError;
 
-      console.log('✅ Rental updated successfully');
+      console.log('✅ Rental updated successfully with extension fields');
 
       return true;
     } catch (error) {
@@ -412,7 +401,7 @@ class ExtensionPricingService {
 
       if (error) throw error;
 
-      return { extensions: data || [] };  // Wrap in object for consistency
+      return { extensions: data || [] };
     } catch (error) {
       console.error('❌ Error fetching extension history:', error);
       throw error;
@@ -421,7 +410,6 @@ class ExtensionPricingService {
 
   /**
    * Get extensions by rental ID (alias for getExtensionHistory)
-   * This method provides backward compatibility for components that use this naming
    */
   static async getExtensionsByRental(rentalId) {
     return await this.getExtensionHistory(rentalId);

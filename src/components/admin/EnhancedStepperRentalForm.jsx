@@ -123,6 +123,7 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
   const isManualStatusChange = useRef(false);
   const isProgrammaticChange = useRef(false);
   const customerSearchRef = useRef(null);
+  const isProcessing = useRef(false);
 
   // ==================== NEW: LOAD DAMAGE DEPOSIT CONFIG ====================
   const loadDamageDepositConfig = async () => {
@@ -382,14 +383,36 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
   };
 
   const calculateQuantityAndPricing = () => {
+    console.log('🧮 calculateQuantityAndPricing called');
     const { rental_type, rental_start_date, rental_end_date, rental_start_time, rental_end_time, vehicle_id } = formData;
 
-    if (!rental_start_date || !rental_end_date) return;
+    console.log('📊 Inputs:', {
+      rental_type,
+      rental_start_date,
+      rental_end_date,
+      rental_start_time,
+      rental_end_time,
+      vehicle_id
+    });
+
+    if (!rental_start_date || !rental_end_date) {
+      console.log('❌ Missing start or end date');
+      return;
+    }
 
     let startDatetime = composeDateTime(rental_start_date, rental_start_time);
     let endDatetime = composeDateTime(rental_end_date, rental_end_time);
 
-    if (!startDatetime || !endDatetime || isAfter(startDatetime, endDatetime)) return;
+    console.log('📅 Date objects:', { startDatetime, endDatetime });
+
+    if (!startDatetime || !endDatetime) return;
+
+    // Handle overnight hourly rentals
+    if (rental_type === 'hourly' && startDatetime >= endDatetime) {
+      console.log('⏱️ Adjusting for overnight hourly rental');
+      endDatetime = new Date(endDatetime);
+      endDatetime.setDate(endDatetime.getDate() + 1);
+    }
 
     let updatedEndDate = rental_end_date;
     let isOvernight = false;
@@ -406,15 +429,20 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     if (rental_type === 'hourly') {
       const diffHours = (endDatetime - startDatetime) / (1000 * 60 * 60);
       quantity = Math.ceil(Math.max(diffHours, 1));
+      console.log('⏱️ Hourly calculation:', { diffHours, quantity });
     } else {
       const startDate = parseDateAsLocal(rental_start_date);
       const endDate = parseDateAsLocal(updatedEndDate);
       if (!startDate || !endDate) return;
       const diffDays = Math.ceil((endDate - startDate) / (1000 * 60 * 60 * 24));
       quantity = Math.max(diffDays, 1);
+      console.log('📅 Daily calculation:', { diffDays, quantity });
     }
 
+    console.log('📊 Previous quantity:', formData.quantity_days, 'New quantity:', quantity);
+    
     if (isOvernight || formData.quantity_days !== quantity) {
+      console.log('✅ Updating quantity_days to:', quantity);
       setFormData(prev => ({
         ...prev,
         quantity_days: quantity,
@@ -423,7 +451,10 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     }
     
     if (vehicle_id) {
+      console.log('🚗 Calling autoPopulateUnitPrice for vehicle:', vehicle_id);
       autoPopulateUnitPrice();
+    } else {
+      console.log('⏭️ No vehicle_id, skipping autoPopulateUnitPrice');
     }
   };
 
@@ -612,6 +643,10 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
 
   // ==================== EVENT HANDLERS ====================
   const handleInputChange = (field, value) => {
+    console.log(`🔵 handleInputChange: field="${field}", value="${value}"`);
+    console.log(`🔵 Current rental_type: ${formData.rental_type}`);
+    console.log(`🔵 Current rental_start_date: ${formData.rental_start_date}`);
+    console.log(`🔵 Current rental_end_date: ${formData.rental_end_date}`);
     if (field === 'payment_status') {
       isManualStatusChange.current = true;
     }
@@ -643,6 +678,9 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     }
 
     if (field === 'rental_type') {
+      console.log('🔄 Rental type changed to:', value);
+      console.log('📅 Before change - start_date:', newFormData.rental_start_date, 'end_date:', newFormData.rental_end_date);
+      
       setSelectedQuickDuration(null);
       
       const today = getMoroccoTodayString();
@@ -654,22 +692,49 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
       }
 
       if (value === 'hourly') {
-        newFormData.rental_start_date = startDateToUse;
-        newFormData.rental_end_date = startDateToUse;
+        console.log('⏱️ Setting up HOURLY rental...');
+        
+        const currentHour = parseInt(currentTime.split(':')[0]);
+        
+        // If current time is close to midnight (23:00 or later), 
+        // set end time to be on the same day with a reasonable end time
+        if (currentHour >= 23) {
+          // For late-night hourly rentals, end at midnight (00:00 next day)
+          newFormData.rental_start_date = startDateToUse;
+          newFormData.rental_end_date = startDateToUse; // Same date initially
+          newFormData.rental_start_time = currentTime;
+          newFormData.rental_end_time = '23:59'; // End just before midnight
+          
+          console.log('🌙 Late night hourly - setting end at 23:59');
+        } else {
+          // Normal hourly rental - 1 hour ahead
+          newFormData.rental_start_date = startDateToUse;
+          newFormData.rental_end_date = startDateToUse; // Same date
         newFormData.rental_start_time = currentTime;
-        const endTime = new Date();
-        endTime.setHours(endTime.getHours() + 1);
-        newFormData.rental_end_time = endTime.toTimeString().slice(0, 5);
+          const endTime = new Date();
+          endTime.setHours(endTime.getHours() + 1);
+          newFormData.rental_end_time = endTime.toTimeString().slice(0, 5);
+        }
+        
+        console.log('✅ HOURLY set - start_date:', newFormData.rental_start_date, 
+                    'end_date:', newFormData.rental_end_date);
+        console.log('✅ Times - start:', newFormData.rental_start_time, 
+                    'end:', newFormData.rental_end_time);
       } else if (value === 'daily') {
+        console.log('📅 Setting up DAILY rental...');
         const tomorrowStr = getMoroccoDateOffset(1, startDateToUse);
         newFormData.rental_start_date = startDateToUse;
         newFormData.rental_end_date = tomorrowStr;
         newFormData.rental_start_time = '09:00';
         newFormData.rental_end_time = '09:00';
+        console.log('✅ DAILY set - start_date:', startDateToUse, 'end_date:', tomorrowStr);
       }
     }
 
     if (field === 'rental_start_date') {
+      console.log('📅 rental_start_date changed to:', value);
+      console.log('📊 Current rental_type:', newFormData.rental_type);
+      
       let dateValue = value;
       if (dateValue && dateValue.includes('T')) {
         dateValue = dateValue.split('T')[0];
@@ -677,11 +742,27 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
       if (newFormData.rental_type === 'daily') {
         const nextDay = getMoroccoDateOffset(1, dateValue);
         newFormData.rental_end_date = nextDay;
+        console.log('📅 DAILY: Setting end_date to next day:', nextDay);
       } else if (newFormData.rental_type === 'hourly') {
         newFormData.rental_end_date = dateValue;
+        console.log('⏱️ HOURLY: Setting end_date to same as start:', dateValue);
       }
       newFormData.rental_start_date = dateValue;
     }
+
+    if (field === 'rental_end_date' && newFormData.rental_type === 'hourly') {
+      console.log('⚠️ Attempt to change rental_end_date for hourly rental');
+      console.log('📊 Current start_date:', newFormData.rental_start_date, 'Attempted end_date:', value);
+      newFormData.rental_end_date = newFormData.rental_start_date;
+      console.log('✅ Reverted end_date back to:', newFormData.rental_start_date);
+    }
+
+    console.log('🔄 Final newFormData state:');
+    console.log('- rental_type:', newFormData.rental_type);
+    console.log('- rental_start_date:', newFormData.rental_start_date);
+    console.log('- rental_end_date:', newFormData.rental_end_date);
+    console.log('- rental_start_time:', newFormData.rental_start_time);
+    console.log('- rental_end_time:', newFormData.rental_end_time);
 
     if (field === 'customer_name') {
       isProgrammaticChange.current = false;
@@ -706,16 +787,40 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
     }
   };
 
-  const handleSuggestionClick = (suggestion) => {
+  const handleSuggestionClick = async (suggestion) => {
     isProgrammaticChange.current = false;
-    setFormData(prev => ({
-      ...prev,
-      customer_name: suggestion.name,
-      customer_email: !isEmailDirty ? suggestion.email || '' : prev.customer_email,
-      customer_phone: !isPhoneDirty ? suggestion.phone || '' : prev.customer_phone,
-      customer_licence_number: suggestion.licence_number || '',
-      customer_id: suggestion.id || null,
-    }));
+    
+    // Fetch complete customer data from database
+    try {
+      const { data: customerData, error } = await supabase
+        .from('app_4c3a7a6153_customers')
+        .select('*')
+        .eq('id', suggestion.id)
+        .single();
+      
+      if (error) throw error;
+      
+      setFormData(prev => ({
+        ...prev,
+        customer_name: suggestion.name,
+        customer_email: !isEmailDirty ? (customerData?.email || suggestion.email || '') : prev.customer_email,
+        customer_phone: !isPhoneDirty ? (customerData?.phone || suggestion.phone || '') : prev.customer_phone,
+        customer_licence_number: suggestion.licence_number || '',
+        customer_id: suggestion.id || null,
+      }));
+    } catch (error) {
+      console.error('Error fetching customer data:', error);
+      // Fallback to suggestion data
+      setFormData(prev => ({
+        ...prev,
+        customer_name: suggestion.name,
+        customer_email: !isEmailDirty ? suggestion.email || '' : prev.customer_email,
+        customer_phone: !isPhoneDirty ? suggestion.phone || '' : prev.customer_phone,
+        customer_licence_number: suggestion.licence_number || '',
+        customer_id: suggestion.id || null,
+      }));
+    }
+    
     setSuggestions([]);
   };
 
@@ -1182,23 +1287,74 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
 
   // ==================== AUTOMATION HOOKS ====================
   useEffect(() => {
+    console.log('🔄 useEffect triggered for date calculations');
+    
+    // Add a guard to prevent infinite loops
+    if (isProcessing.current) {
+      console.log('⏸️ Already processing, skipping');
+      return;
+    }
+    
+    isProcessing.current = true;
+    
+    try {
+    console.log('📊 Current formData:', {
+      rental_type: formData.rental_type,
+      rental_start_date: formData.rental_start_date,
+      rental_end_date: formData.rental_end_date,
+      rental_start_time: formData.rental_start_time,
+      rental_end_time: formData.rental_end_time
+    });
+    
     if (formData.rental_start_date && formData.rental_end_date && formData.rental_start_time && formData.rental_end_time) {
       const startDatetime = composeDateTime(formData.rental_start_date, formData.rental_start_time);
       const endDatetime = composeDateTime(formData.rental_end_date, formData.rental_end_time);
 
-      if (startDatetime && endDatetime && startDatetime >= endDatetime) {
+      console.log('📅 Date objects:', { startDatetime, endDatetime });
+      
+      if (startDatetime && endDatetime) {
+        if (formData.rental_type === 'hourly') {
+          // For hourly rentals, if end time appears to be earlier (like 00:49 vs 23:49),
+          // it's actually the next day, so adjust the end date
+          if (startDatetime >= endDatetime) {
+            console.log('⏱️ Hourly overnight calculation detected');
+            const adjustedEndDatetime = new Date(endDatetime);
+            adjustedEndDatetime.setDate(adjustedEndDatetime.getDate() + 1);
+            
+            const adjustedEndDate = formatDateToYYYYMMDD(adjustedEndDatetime);
+            const adjustedEndTime = adjustedEndDatetime.toTimeString().slice(0, 5);
+            
+            console.log('🔄 Adjusting end datetime for overnight hourly rental');
+            console.log('📊 New end:', { date: adjustedEndDate, time: adjustedEndTime });
+            
+            setFormData(prev => ({
+              ...prev,
+              rental_end_date: adjustedEndDate,
+              rental_end_time: adjustedEndTime,
+            }));
+            return;
+          }
+        } else {
+          // Daily rentals - normal logic
+          if (startDatetime >= endDatetime) {
+            console.log('⚠️ Invalid date range - start >= end for daily');
         let newStartDatetime = new Date(endDatetime);
         
         if (formData.rental_type === 'hourly') {
           newStartDatetime.setHours(newStartDatetime.getHours() - 1);
+          console.log('⏱️ Adjusted hourly start time back by 1 hour');
         } else {
           newStartDatetime.setDate(newStartDatetime.getDate() - 1);
+          console.log('📅 Adjusted daily start date back by 1 day');
         }
 
         const newStartDate = formatDateToYYYYMMDD(newStartDatetime);
         const newStartTime = newStartDatetime.toTimeString().slice(0, 5);
 
+        console.log('📊 New start values:', { newStartDate, newStartTime });
+
         if (formData.rental_start_date !== newStartDate || formData.rental_start_time !== newStartTime) {
+          console.log('✅ Updating form data with adjusted start time');
           setFormData(prev => ({
             ...prev,
             rental_start_date: newStartDate,
@@ -1208,10 +1364,23 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
           return;
         }
       } else {
-        setDateError(null);
+            console.log('✅ Date range is valid');
+            setDateError(null);
+          }
+        }
       }
     }
+
+    // Calculate quantity and pricing
+    console.log('🧮 Calling calculateQuantityAndPricing');
     calculateQuantityAndPricing();
+    
+  } finally {
+    // Reset processing flag after a short delay
+    setTimeout(() => {
+      isProcessing.current = false;
+    }, 100);
+  }
   }, [
     formData.rental_start_date, 
     formData.rental_end_date,

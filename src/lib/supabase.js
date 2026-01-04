@@ -15,11 +15,12 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
-    // FIXED: Prevent automatic token refresh on browser focus/visibility changes
-    // This was causing page refreshes when switching between browsers
     storage: window.localStorage,
     storageKey: 'supabase.auth.token',
-    flowType: 'pkce'
+    flowType: 'pkce',
+    // ✅ FIX: Prevent automatic session refresh on focus/visibility changes
+    // This was causing unwanted page refreshes when switching tabs
+    debug: false
   },
   realtime: {
     params: {

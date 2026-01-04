@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { supabase } from '../../lib/supabase';
+import { generateThumbnailFromBlob, uploadThumbnail } from '../../utils/thumbnailGenerator';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
@@ -45,6 +46,8 @@ import {
   StopCircle,
   Video,
   FileVideo,
+  Camera,
+  Flashlight,
   Info,
   Gauge,
   Package
@@ -53,6 +56,7 @@ import { FaWhatsapp } from 'react-icons/fa';
 import html2canvas from 'html2canvas';
 import jsPDF from 'jspdf';
 import InvoiceTemplate from '../../components/InvoiceTemplate';
+import { processVideo } from '../../utils/videoConverter';
 
 export default function RentalDetails() {
   const { id } = useParams();
@@ -106,6 +110,7 @@ export default function RentalDetails() {
 
   // Deposit return state
   const [showDepositSignatureModal, setShowDepositSignatureModal] = useState(false);
+  const [deductFromDeposit, setDeductFromDeposit] = useState(false);
   const [depositReturnAmount, setDepositReturnAmount] = useState(0);
 
   // Odometer state
@@ -121,6 +126,26 @@ export default function RentalDetails() {
     customerId: null,
     rental: null
   });
+
+  // Camera recording state - NEW for native camera support
+  const [isRecording, setIsRecording] = useState(false);
+  const [facingMode, setFacingMode] = useState('environment'); // Default to back camera
+  const [isFirstLoad, setIsFirstLoad] = useState(true);
+  const [isProcessingThumbnail, setIsProcessingThumbnail] = useState(false); // 'environment' = back, 'user' = front
+  const [recordingStream, setRecordingStream] = useState(null);
+  const [mediaRecorder, setMediaRecorder] = useState(null);
+  const [recordedChunks, setRecordedChunks] = useState([]);
+  const [torchEnabled, setTorchEnabled] = useState(false);
+  const videoPreviewRef = useRef(null);
+  const canvasRef = useRef(null);
+  const animationFrameRef = useRef(null);
+
+  // Video conversion state - for iOS .MOV/HEVC to mp4 conversion
+  const [isConverting, setIsConverting] = useState(false);
+  const [conversionProgress, setConversionProgress] = useState(0);
+  
+
+
 
   const contractRef = useRef();
   const invoiceRef = useRef();
@@ -209,7 +234,8 @@ export default function RentalDetails() {
         .select(`
           *,
           vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(*),
-          package:rental_packages(*)
+          package:rental_packages(*),
+          extensions:rental_extensions!rental_extensions_rental_id_fkey(*)
         `)
         .eq('id', id)
         .single();
@@ -218,27 +244,6 @@ export default function RentalDetails() {
       
       let rentalData = data;
 
-      // ✅ UPDATED: Calculate payment status considering deposit return
-      const deposit = parseFloat(rentalData.deposit_amount) || 0;
-      const total = parseFloat(rentalData.total_amount) || 0;
-      const isDepositReturned = !!rentalData.deposit_returned_at;
-      
-      if (rentalData.payment_status !== 'overdue') {
-          if (total > 0) {
-              // If deposit was returned with deduction, mark as paid
-              if (isDepositReturned && deposit < total) {
-                  rentalData.payment_status = 'paid';
-              } else if (deposit <= 0) {
-                  rentalData.payment_status = 'unpaid';
-              } else if (deposit >= total) {
-                  rentalData.payment_status = 'paid';
-              } else {
-                  rentalData.payment_status = 'partial';
-              }
-          } else {
-              rentalData.payment_status = 'unpaid';
-          }
-      }
 
       setRental(rentalData);
       
@@ -266,6 +271,33 @@ export default function RentalDetails() {
     }
   }, [rental?.id]);
 
+
+  // ✅ MEMOIZED: Calculate extension totals to prevent unnecessary recalculations
+  const totalExtensionFees = useMemo(() => {
+    if (!rental?.extensions || rental.extensions.length === 0) return 0;
+    
+    const approvedExtensions = rental.extensions.filter(ext => ext.status === "approved");
+    const total = approvedExtensions.reduce((sum, ext) => sum + (parseFloat(ext.extension_price) || 0), 0);
+    
+    console.log("📊 Extension Fees Calculation:", {
+      totalExtensions: rental.extensions.length,
+      approvedCount: approvedExtensions.length,
+      breakdown: approvedExtensions.map(ext => ({
+        hours: ext.extension_hours,
+        price: ext.extension_price
+      })),
+      totalFees: total
+    });
+    
+    return total;
+  }, [rental?.extensions]);
+
+  const totalExtendedHours = useMemo(() => {
+    if (!rental?.extensions || rental.extensions.length === 0) return 0;
+    
+    const approvedExtensions = rental.extensions.filter(ext => ext.status === "approved");
+    return approvedExtensions.reduce((sum, ext) => sum + (parseFloat(ext.extension_hours) || 0), 0);
+  }, [rental?.extensions]);
   // Calculate late fee for completed rentals
   useEffect(() => {
     const calculateLateFee = async () => {
@@ -410,23 +442,32 @@ export default function RentalDetails() {
     return status === 'paid';
   };
 
-  // ✅ UPDATED: Calculate deposit return amount after deducting unpaid balance
+    // ✅ UPDATED: Calculate deposit return amount with toggle support
   const calculateDepositReturn = () => {
     const damageDeposit = parseFloat(rental?.damage_deposit || 0);
-    const totalRentalCost = parseFloat(rental?.total_amount) || 0;
-    const depositPaid = parseFloat(rental?.deposit_amount) || 0;
+    // Calculate actual grand total including overage and extensions
+    const baseAmount = calculateRentalBaseAmount();
+    const overageCharge = parseFloat(rental?.overage_charge || 0);
+    const extensionFees = parseFloat(totalExtensionFees || 0);
+    const totalRentalCost = baseAmount + overageCharge + extensionFees;
+    const depositPaid = parseFloat(rental?.deposit_amount || 0);
     const balanceDue = Math.max(0, totalRentalCost - depositPaid);
-    const depositReturn = Math.max(0, damageDeposit - balanceDue);
+    
+    // Apply deduction if toggle is ON and not yet processed
+    const useDeduction = deductFromDeposit && balanceDue > 0 && !rental.deposit_returned_at;
+    const depositReturn = useDeduction 
+      ? Math.max(0, damageDeposit - balanceDue)
+      : damageDeposit;
     const additionalOwed = Math.max(0, balanceDue - damageDeposit);
     
     return {
       damageDeposit,
       totalRentalCost,
-      depositPaid,
       balanceDue,
       depositReturn,
       hasDeduction: balanceDue > 0,
-      additionalOwed
+      additionalOwed,
+      useDeduction
     };
   };
 
@@ -447,12 +488,20 @@ export default function RentalDetails() {
     try {
       setIsUpdatingPayment(true);
       
+      // Calculate the complete total amount including all charges
+      const baseAmount = calculateRentalBaseAmount();
+      const overageCharge = parseFloat(rental.overage_charge || 0);
+      const extensionFees = parseFloat(totalExtensionFees || 0);
+      const grandTotal = baseAmount + overageCharge + extensionFees;
+      
+      // Update database: Set deposit_amount = grand total, remaining_amount = 0, status = paid
       const { error: updateError } = await supabase
         .from('app_4c3a7a6153_rentals')
         .update({
           payment_status: 'paid',
-          deposit_amount: rental.total_amount,
-          remaining_amount: 0
+          deposit_amount: grandTotal,
+          remaining_amount: 0,
+          updated_at: new Date().toISOString()
         })
         .eq('id', rental.id);
       
@@ -461,14 +510,15 @@ export default function RentalDetails() {
         throw updateError;
       }
 
+      // Update local state to reflect changes immediately
       setRental(prev => ({
         ...prev,
         payment_status: 'paid',
-        deposit_amount: rental.total_amount,
+        deposit_amount: grandTotal,
         remaining_amount: 0
       }));
 
-      alert('✅ Payment status updated to "Paid"!');
+      alert(`✅ Payment status updated to "Paid"!\n\nGrand Total: ${grandTotal.toFixed(2)} MAD\nDeposit Paid: ${grandTotal.toFixed(2)} MAD\nBalance Due: 0.00 MAD`);
       
     } catch (err) {
       console.error('❌ Payment Update Error:', err);
@@ -501,7 +551,7 @@ export default function RentalDetails() {
     }
   };
 
-  // ✅ UPDATED: Handle deposit return signature with auto-update payment status
+    // ✅ UPDATED: Handle deposit return signature with toggle support
   const handleDepositSignatureSave = async (signatureUrl) => {
     try {
       const depositCalc = calculateDepositReturn();
@@ -511,14 +561,16 @@ export default function RentalDetails() {
         deposit_return_signature_url: signatureUrl,
         deposit_returned_at: new Date().toISOString(),
         deposit_return_amount: depositCalc.depositReturn,
-        deposit_deduction_amount: depositCalc.balanceDue,
-        deposit_deduction_reason: depositCalc.hasDeduction ? `Unpaid rental balance: ${depositCalc.balanceDue.toFixed(2)} MAD` : null,
+        deposit_deduction_amount: depositCalc.useDeduction ? depositCalc.balanceDue : 0,
+        deposit_deduction_reason: depositCalc.useDeduction 
+          ? `Unpaid rental balance: ${depositCalc.balanceDue.toFixed(2)} MAD` 
+          : null,
         final_deposit_return_amount: depositCalc.depositReturn,
         updated_at: new Date().toISOString()
       };
 
       // ✅ If balance was deducted from deposit, mark rental as paid
-      if (depositCalc.hasDeduction && depositCalc.balanceDue > 0) {
+      if (depositCalc.useDeduction && depositCalc.balanceDue > 0) {
         updateData.payment_status = 'paid';
         updateData.remaining_amount = 0;
       }
@@ -531,6 +583,7 @@ export default function RentalDetails() {
       if (error) throw error;
 
       setShowDepositSignatureModal(false);
+      setDeductFromDeposit(false); // Reset toggle
       await loadRentalData();
       
       const message = depositCalc.hasDeduction 
@@ -592,11 +645,62 @@ export default function RentalDetails() {
 
     setIsProcessingEndOdometer(true);
     try {
-      const updatedRental = await OverageCalculationService.updateRentalWithOdometer(
-        rental.id,
-        endOdometerValue
-      );
+      // ✅ CRITICAL: PRESERVE ORIGINAL PRICE - Don't call OverageCalculationService
+      const totalDistance = endOdometerValue - startOdometerValue;
+      
+      // Calculate overage charge only
+      let overageCharge = 0;
+      let includedKilometers = 0;
+      
+      if (rental.package?.included_kilometers) {
+        includedKilometers = parseFloat(rental.package.included_kilometers);
+        if (totalDistance > includedKilometers) {
+          const extraKms = totalDistance - includedKilometers;
+          const extraKmRate = parseFloat(rental.package.extra_km_rate) || 1.5;
+          overageCharge = extraKms * extraKmRate;
+        }
+      } else {
+        // Default package if none assigned (100km included)
+        includedKilometers = 100;
+        if (totalDistance > includedKilometers) {
+          const extraKms = totalDistance - includedKilometers;
+          const extraKmRate = 1.5; // Default rate
+          overageCharge = extraKms * extraKmRate;
+        }
+      }
+      
+      // ✅ PRESERVE ORIGINAL PRICE
+      const originalPrice = rental.total_amount || rental.unit_price || 0;
+      const extensionFees = totalExtensionFees || 0;
+      const finalTotal = originalPrice + overageCharge + extensionFees;
+      
+      console.log('🔍 DEBUG - Price Preservation:', {
+        originalPrice,
+        overageCharge,
+        extensionFees,
+        finalTotal,
+        totalDistance,
+        includedKilometers
+      });
 
+      // Update rental with preserved price
+      const { error: updateError } = await supabase
+        .from('app_4c3a7a6153_rentals')
+        .update({
+          ending_odometer: endOdometerValue,
+          overage_charge: overageCharge,
+          total_distance: totalDistance,
+          // ✅ PRESERVE original total_amount
+          total_amount: originalPrice,
+          // Recalculate remaining amount
+          remaining_amount: Math.max(0, finalTotal - (parseFloat(rental.deposit_amount) || 0)),
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', rental.id);
+
+      if (updateError) throw updateError;
+
+      // Update vehicle odometer
       if (rental.vehicle_id) {
         const { error: vehicleError } = await supabase
           .from('saharax_0u4w4d_vehicles')
@@ -611,22 +715,50 @@ export default function RentalDetails() {
         }
       }
 
-      await loadRentalData();
-
       setShowEndOdometerPrompt(false);
       setEndOdometer('');
       
-      const totalDistance = endOdometerValue - startOdometerValue;
-      alert(`✅ Ending odometer recorded successfully!\n\nTotal distance traveled: ${totalDistance.toFixed(2)} km`);
+      // Update local state
+      setRental(prev => ({
+        ...prev,
+        ending_odometer: endOdometerValue,
+        overage_charge: overageCharge,
+        total_distance: totalDistance,
+        // Keep original price
+        total_amount: originalPrice
+      }));
+      
+      // Complete the rental
+      const { error } = await supabase
+        .from('app_4c3a7a6153_rentals')
+        .update({ 
+          rental_status: 'completed', 
+          completed_at: new Date().toISOString() 
+        })
+        .eq('id', rental.id);
+
+      if (error) throw error;
+      
+      if (rental.vehicle_id) {
+        await supabase
+          .from('saharax_0u4w4d_vehicles')
+          .update({ status: 'available' })
+          .eq('id', rental.vehicle_id);
+      }
+
+      await loadRentalData();
+      
+      alert(`✅ Rental completed successfully!\n\nDistance: ${totalDistance.toFixed(2)} km\nOverage: ${overageCharge.toFixed(2)} MAD\nOriginal Price: ${originalPrice.toFixed(2)} MAD\nTotal: ${finalTotal.toFixed(2)} MAD`);
+      
+      navigate('/admin/rentals');
       
     } catch (err) {
-      console.error('❌ Error saving ending odometer:', err);
-      alert(`Failed to save ending odometer. Error: ${err.message}`);
+      console.error('❌ Error completing rental:', err);
+      alert(`Failed to complete rental. Error: ${err.message}`);
     } finally {
       setIsProcessingEndOdometer(false);
     }
   };
-
 
   const loadRentalMedia = async (rentalId) => {
     try {
@@ -744,52 +876,591 @@ export default function RentalDetails() {
   }, [rental?.started_at, rental?.rental_status, currentTime]);
 
 
-  const uploadFromGallery = () => {
+
+    /**
+   * ENHANCED CAMERA RECORDING - iOS/Android Compatible
+   * Ensures mp4 output format for maximum compatibility
+   * Torch/flashlight support for both platforms
+   */
+
+  
+  const switchCamera = async () => {
+    if (!isRecording) return;
+    
+    try {
+      console.log('🔄 Switching camera...');
+      
+      // Stop current recording and stream
+      if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+        mediaRecorder.stop();
+      }
+      
+      if (recordingStream) {
+        recordingStream.getTracks().forEach(track => track.stop());
+      }
+      
+      // Stop canvas rendering
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+      
+      // Toggle facing mode
+      const newFacingMode = facingMode === 'environment' ? 'user' : 'environment';
+      setFacingMode(newFacingMode);
+      
+      // Restart with new camera
+      const constraints = {
+        video: {
+          facingMode: newFacingMode,
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          frameRate: { ideal: 30 }
+        },
+        audio: true
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      setRecordingStream(stream);
+
+      // Setup canvas rendering
+      if (videoPreviewRef.current && canvasRef.current) {
+        const video = videoPreviewRef.current;
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        
+        video.setAttribute('muted', 'true');
+        video.setAttribute('playsinline', 'true');
+        video.setAttribute('webkit-playsinline', 'true');
+        video.muted = true;
+        video.playsInline = true;
+        video.autoplay = true;
+        
+        video.srcObject = stream;
+        
+        video.onloadedmetadata = () => {
+          canvas.width = video.videoWidth || 1920;
+          canvas.height = video.videoHeight || 1080;
+          
+          const drawFrame = () => {
+            if (video.readyState === video.HAVE_ENOUGH_DATA) {
+              ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+            }
+            animationFrameRef.current = requestAnimationFrame(drawFrame);
+          };
+          
+          video.play().then(() => {
+            console.log('✅ Camera switched, canvas rendering started');
+            drawFrame();
+            window.dispatchEvent(new Event('resize'));
+          }).catch(err => {
+            console.error('❌ Video play failed after switch:', err);
+          });
+        };
+      }
+
+      // Setup new MediaRecorder
+      let mimeType = '';
+      const mp4Types = ['video/mp4', 'video/mp4;codecs=avc1', 'video/mp4;codecs=h264'];
+      
+      for (const type of mp4Types) {
+        if (MediaRecorder.isTypeSupported(type)) {
+          mimeType = type;
+          break;
+        }
+      }
+      
+      if (!mimeType) {
+        if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+          mimeType = 'video/webm;codecs=vp9';
+        } else if (MediaRecorder.isTypeSupported('video/webm')) {
+          mimeType = 'video/webm';
+        }
+      }
+
+      const recorder = new MediaRecorder(stream, {
+        mimeType: mimeType,
+        videoBitsPerSecond: 2500000
+      });
+
+      const chunks = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          chunks.push(event.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        console.log('✅ Recording stopped, processing video...');
+        
+        // Prevent double execution
+        if (isProcessingThumbnail) {
+          console.log('⚠️ Already processing, skipping duplicate call');
+          return;
+        }
+        setIsProcessingThumbnail(true);
+        
+        // Create blob with recorded MIME type
+        const videoBlob = new Blob(chunks, { type: mimeType });
+        const timestamp = Date.now();
+        
+        // Always use .mp4 extension for consistency
+        const filename = `recorded_${timestamp}.mp4`;
+        
+        // Create preview URL (will be revoked after upload)
+        const previewUrl = URL.createObjectURL(videoBlob);
+
+        const fileObj = {
+          id: timestamp + Math.random(),
+          type: 'video',
+          blob: videoBlob,
+          url: previewUrl,
+          name: filename,
+          timestamp: new Date().toISOString(),
+          duration: 0,
+          size: videoBlob.size,
+          source: 'camera',
+          mimeType: mimeType
+        };
+
+        setCapturedFiles(prev => [...prev, fileObj]);
+        setRecordedChunks([]);
+        
+        // Cleanup camera stream and preview
+        stream.getTracks().forEach(track => {
+          track.stop();
+          console.log('🛑 Camera track stopped:', track.kind);
+        });
+        
+        // CRITICAL: Properly release camera hardware
+        if (videoPreviewRef.current) {
+          videoPreviewRef.current.srcObject = null;
+          videoPreviewRef.current.load();
+        }
+        
+        setRecordingStream(null);
+        setIsProcessingThumbnail(false);
+        
+        console.log('✅ Video ready for upload:', filename);
+      };
+
+      setMediaRecorder(recorder);
+      setRecordedChunks(chunks);
+      recorder.start();
+      
+      console.log(`✅ Camera switched to ${newFacingMode} and recording restarted`);
+      
+    } catch (err) {
+      console.error('❌ Camera switch error:', err);
+      alert(`Failed to switch camera: ${err.message}`);
+    }
+  };
+
+  const startCameraRecording = async () => {
+    try {
+      console.log('📹 Starting camera recording with Final Fix...');
+      console.log('🎯 Initial facingMode:', facingMode);
+      
+      // Set isRecording FIRST to render DOM elements
+      setIsRecording(true);
+      
+      // Wait for React to render the DOM elements
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      console.log('🔧 Checking refs after DOM render - Video:', !!videoPreviewRef.current, 'Canvas:', !!canvasRef.current);
+      
+      const constraints = {
+        video: {
+          facingMode: { ideal: facingMode },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 30 }
+        },
+        audio: true
+      };
+
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      setRecordingStream(stream);
+      
+      console.log('✅ Camera stream acquired, waiting for hardware warm-up...');
+      console.log('📹 Stream video track settings:', stream.getVideoTracks()[0].getSettings());
+
+      if (videoPreviewRef.current && canvasRef.current) {
+        const video = videoPreviewRef.current;
+        const canvas = canvasRef.current;
+        
+        console.log('🔧 Video element exists:', !!video);
+        console.log('🔧 Canvas element exists:', !!canvas);
+        
+        video.muted = true;
+        video.setAttribute('muted', 'true');
+        video.setAttribute('playsinline', 'true');
+        video.setAttribute('webkit-playsinline', 'true');
+        video.playsInline = true;
+        video.autoplay = true;
+        
+        console.log('🔧 Setting up video event handlers...');
+        
+        // Use Promise to ensure metadata loads
+        const metadataPromise = new Promise((resolve) => {
+          const handleMetadata = () => {
+            console.log('📐 Video metadata loaded:', video.videoWidth, 'x', video.videoHeight);
+            console.log('🎥 Video readyState:', video.readyState);
+            resolve();
+          };
+          
+          // Try both events
+          video.onloadedmetadata = handleMetadata;
+          video.onloadeddata = handleMetadata;
+          
+          // Force metadata load after 500ms if events don't fire
+          setTimeout(() => {
+            if (video.readyState === 0) {
+              console.log('⚠️ Forcing metadata load...');
+              video.load();
+            }
+            // Resolve anyway after 1 second
+            setTimeout(resolve, 500);
+          }, 500);
+        });
+        
+        console.log('📎 Attaching stream to video element...');
+        video.srcObject = stream;
+        
+        // Wait for metadata
+        await metadataPromise;
+        
+        console.log('✅ Metadata loaded, setting canvas dimensions...');
+        canvas.width = video.videoWidth || 1280;
+        canvas.height = video.videoHeight || 720;
+        console.log('📐 Canvas dimensions set:', canvas.width, 'x', canvas.height);
+        
+        // Force play
+        try {
+          await video.play();
+          console.log('✅ Video playing, starting manual paint loop');
+          console.log('🎬 Video currentTime:', video.currentTime);
+          
+          const paintFrame = () => {
+            if (videoPreviewRef.current && !videoPreviewRef.current.paused && videoPreviewRef.current.readyState >= 2) {
+              const ctx = canvasRef.current.getContext('2d');
+              ctx.drawImage(videoPreviewRef.current, 0, 0, canvas.width, canvas.height);
+              animationFrameRef.current = requestAnimationFrame(paintFrame);
+            } else {
+              // Retry if not ready
+              animationFrameRef.current = requestAnimationFrame(paintFrame);
+            }
+          };
+          
+          requestAnimationFrame(paintFrame);
+          window.dispatchEvent(new Event('resize'));
+          console.log('🎨 Paint loop started successfully');
+          
+        } catch (err) {
+          console.error('❌ Video play failed:', err);
+        }
+        
+
+      } else {
+        console.error('❌ Video or Canvas ref not available after 300ms delay!');
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 500));
+      console.log('✅ Hardware warm-up complete, initializing MediaRecorder...');
+
+      let mimeType = '';
+      const mp4Types = [
+        'video/mp4',
+        'video/mp4;codecs=avc1',
+        'video/mp4;codecs=h264'
+      ];
+      
+      for (const type of mp4Types) {
+        if (MediaRecorder.isTypeSupported(type)) {
+          mimeType = type;
+          console.log(`✅ Using ${type} for recording`);
+          break;
+        }
+      }
+      
+      if (!mimeType) {
+        if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+          mimeType = 'video/webm;codecs=vp9';
+        } else if (MediaRecorder.isTypeSupported('video/webm')) {
+          mimeType = 'video/webm';
+        }
+      }
+
+      if (!mimeType) {
+        throw new Error('No supported video format found on this device');
+      }
+
+      const recorder = new MediaRecorder(stream, {
+        mimeType: mimeType,
+        videoBitsPerSecond: 2500000
+      });
+
+      const chunks = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) {
+          chunks.push(event.data);
+        }
+      };
+
+      recorder.onstop = async () => {
+        console.log('✅ Recording stopped, processing video...');
+        
+        // Prevent double execution
+        if (isProcessingThumbnail) {
+          console.log('⚠️ Already processing, skipping duplicate call');
+          return;
+        }
+        setIsProcessingThumbnail(true);
+        
+        // Create blob with recorded MIME type
+        const videoBlob = new Blob(chunks, { type: mimeType });
+        const timestamp = Date.now();
+        
+        // Always use .mp4 extension for consistency
+        const filename = `recorded_${timestamp}.mp4`;
+        
+        // Create preview URL (will be revoked after upload)
+        const previewUrl = URL.createObjectURL(videoBlob);
+
+        const fileObj = {
+          id: timestamp + Math.random(),
+          type: 'video',
+          blob: videoBlob,
+          url: previewUrl,
+          name: filename,
+          timestamp: new Date().toISOString(),
+          duration: 0,
+          size: videoBlob.size,
+          source: 'camera',
+          mimeType: mimeType
+        };
+
+        setCapturedFiles(prev => [...prev, fileObj]);
+        setRecordedChunks([]);
+        
+        // Cleanup camera stream and preview
+        stream.getTracks().forEach(track => {
+          track.stop();
+          console.log('🛑 Camera track stopped:', track.kind);
+        });
+        
+        // CRITICAL: Properly release camera hardware
+        if (videoPreviewRef.current) {
+          videoPreviewRef.current.srcObject = null;
+          videoPreviewRef.current.load();
+        }
+        
+        setRecordingStream(null);
+        setIsProcessingThumbnail(false);
+        
+        console.log('✅ Video ready for upload:', filename);
+      };
+
+      setMediaRecorder(recorder);
+      setRecordedChunks(chunks);
+      recorder.start();
+      
+      console.log('✅ Recording started with MIME type:', mimeType);
+
+    } catch (err) {
+      console.error('❌ Camera recording error:', err);
+      setIsRecording(false);
+      alert(`Failed to start camera: ${err.message}
+
+Please ensure camera permissions are granted.`);
+    }
+  };
+
+  const stopCameraRecording = () => {
+    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+      mediaRecorder.stop();
+      setIsRecording(false);
+      
+      // Cleanup: Cancel animation frame
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+        console.log('🛑 Paint loop cancelled in stopCameraRecording');
+      }
+      
+      if (torchEnabled) {
+        toggleTorch();
+      }
+    }
+  };
+
+  /**
+   * Toggle flashlight/torch during recording
+   * iOS 15+: Supports torch via ImageCapture API
+   * Android Chrome: Native torch support via MediaStreamTrack
+   */
+  const toggleTorch = async () => {
+    if (!recordingStream) return;
+
+    try {
+      const videoTrack = recordingStream.getVideoTracks()[0];
+      const capabilities = videoTrack.getCapabilities();
+
+      // Check if torch is supported on this device
+      // iOS 15+: Supports torch via MediaStreamTrack constraints
+      // Android Chrome: Native torch support via MediaStreamTrack
+      if (!capabilities.torch) {
+        alert('Flashlight not supported on this device');
+        return;
+      }
+
+      const newTorchState = !torchEnabled;
+      
+      // Apply torch constraint to the video track
+      await videoTrack.applyConstraints({
+        advanced: [{ torch: newTorchState }]
+      });
+
+      setTorchEnabled(newTorchState);
+      console.log(`🔦 Torch ${newTorchState ? 'enabled' : 'disabled'}`);
+
+    } catch (err) {
+      console.error('❌ Torch toggle error:', err);
+      alert('Failed to toggle flashlight');
+    }
+  };
+
+  // Cleanup camera stream on component unmount
+  useEffect(() => {
+    return () => {
+      if (recordingStream) {
+        recordingStream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [recordingStream]);
+
+  // 🔍 DEBUG - Overage Calculation Data
+  useEffect(() => {
+    if (rental) {
+      console.log('🔍 DEBUG - Overage Calculation Data:', {
+        // Odometer readings
+        startOdometer: rental.start_odometer,
+        endingOdometer: rental.ending_odometer,
+        totalDistance: rental.total_distance,
+        
+        // Calculated distance
+        calculatedDistance: rental.ending_odometer && rental.start_odometer 
+          ? rental.ending_odometer - rental.start_odometer 
+          : 'N/A',
+        
+        // Package info
+        hasPackage: !!rental.package,
+        packageId: rental.package?.id,
+        packageName: rental.package?.name,
+        includedKilometers: rental.package?.included_kilometers,
+        extraKmRate: rental.package?.extra_km_rate,
+        
+        // Overage charge
+        overageCharge: rental.overage_charge,
+        hasOverageCharge: rental.overage_charge > 0,
+        
+        // Calculated overage
+        calculatedOverage: (() => {
+          if (!rental.ending_odometer || !rental.start_odometer) return 0;
+          const totalDistance = rental.total_distance || (rental.ending_odometer - rental.start_odometer);
+          const includedKms = rental.package?.included_kilometers || 100;
+          const extraKms = Math.max(0, totalDistance - includedKms);
+          const extraKmRate = rental.package?.extra_km_rate || 1.5;
+          return extraKms * extraKmRate;
+        })()
+      });
+    }
+  }, [rental]);
+
+  // Auto-close extension modal when closing video is uploaded
+  useEffect(() => {
+    if (closingMedia.length > 0 && extensionModalOpen) {
+      setExtensionModalOpen(false);
+    }
+  }, [closingMedia, extensionModalOpen]);
+
+
+
+    /**
+   * ENHANCED GALLERY UPLOAD - iOS .MOV/HEVC Auto-Conversion
+   * Automatically converts iOS videos to mp4 before upload
+   * Shows conversion progress to user
+   */
+  const uploadFromGallery = async () => {
     const input = document.createElement('input');
     input.type = 'file';
-    input.accept = 'video/*';
-    input.multiple = false;
+    input.accept = 'video/*,.mov,.MOV'; // Accept all video formats including .MOV
     
     input.onchange = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
 
-      if (file.size > 50 * 1024 * 1024) {
-        alert('File size too large. Please choose a video under 50MB.');
-        return;
-      }
+      console.log('📹 Gallery file selected:', file.name, file.type, `${(file.size / 1024 / 1024).toFixed(2)}MB`);
 
-      if (!file.type.startsWith('video/')) {
-        alert('Please select a video file.');
+      // Check file size (50MB limit)
+      const maxSize = 50 * 1024 * 1024;
+      if (file.size > maxSize) {
+        alert(`File size (${(file.size / 1024 / 1024).toFixed(2)}MB) exceeds 50MB limit. Please choose a smaller video.`);
         return;
       }
 
       setIsUploading(true);
-      setUploadProgress(0);
+      setIsConverting(true);
+      setConversionProgress(0);
 
       try {
+        // Process video: convert iOS .MOV/HEVC to mp4 if needed
+        console.log('🔍 Checking if video needs conversion...');
+        
+        const { blob, converted } = await processVideo(file, (progress) => {
+          setConversionProgress(progress);
+          console.log(`🔄 Processing: ${progress}%`);
+        });
+
+        setIsConverting(false);
+
+        if (converted) {
+          console.log('✅ Video converted to mp4 successfully');
+        }
+
+        // Create file object with converted blob
+        const timestamp = Date.now();
+        const filename = file.name.replace(/\.(mov|MOV)$/i, '.mp4');
+
         const fileObj = {
-          id: Date.now() + Math.random(),
+          id: timestamp + Math.random(),
           type: 'video',
-          blob: file,
-          url: URL.createObjectURL(file),
-          name: file.name,
+          blob: blob,
+          url: URL.createObjectURL(blob),
+          name: filename,
           timestamp: new Date().toISOString(),
           duration: 0,
-          size: file.size
+          size: blob.size,
+          source: 'gallery',
+          converted: converted
         };
-        
+
         setCapturedFiles(prev => [...prev, fileObj]);
+        console.log('✅ Video ready for upload:', filename);
+
+      } catch (error) {
+        console.error('❌ Video processing failed:', error);
+        alert(`Failed to process video: ${error.message}\n\nPlease try a different video file.`);
+      } finally {
         setIsUploading(false);
-      } catch (err) {
-        console.error('❌ Error:', err);
-        alert('Upload failed. Please try again.');
-        setIsUploading(false);
+        setIsConverting(false);
+        setConversionProgress(0);
       }
     };
-    
+
     input.click();
   };
+
 
   const removeFile = (fileId) => {
     setCapturedFiles(prev => {
@@ -809,116 +1480,219 @@ export default function RentalDetails() {
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
   };
 
-  const saveMedia = async (phase) => {
-    const videoFile = capturedFiles.find(file => file.type === 'video');
-    if (!videoFile) {
-      alert(`Please upload a video for ${phase} documentation.`);
+  // ✅ UPDATED: Enhanced saveMedia with improved retry logic and non-blocking thumbnail generation
+    /**
+   * ENHANCED SAVE MEDIA - First-Try Upload Success with Progress
+   * Implements robust upload with real-time progress tracking
+   * Automatic thumbnail generation after successful upload
+   * Retry logic only for network errors
+   */
+  /**
+   * ENHANCED SAVE MEDIA - First-Try Upload Success with Progress
+   * Implements robust upload with real-time progress tracking
+   * Automatic thumbnail generation after successful upload
+   * Retry logic only for network errors
+   */
+  const saveMedia = async (type) => {
+    if (capturedFiles.length === 0) {
+      alert('Please record or select a video first');
       return;
     }
 
+    setIsProcessingVideo(true);
+    setUploadProgress(0);
+
     try {
-      setIsProcessingVideo(true);
-      
+      const file = capturedFiles[0];
+      console.log(`📤 Starting upload for ${type} video:`, file.name);
+
+      // Generate unique filename with timestamp
       const timestamp = Date.now();
-      const fileExtension = videoFile.name.split('.').pop() || 'mp4';
-      const filename = `${rental.id}/${timestamp}_${phase}_inspection.${fileExtension}`;
-      const bucketName = `rental-media-${phase}`;
+      const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+      const fileName = `${type}_${rental.id}_${timestamp}_${sanitizedName}`;
+      const filePath = `rentals/${rental.id}/${type}/${fileName}`;
 
-      const { data: uploadData, error: uploadError } = await supabase.storage
-        .from(bucketName)
-        .upload(filename, videoFile.blob, { upsert: false });
+      console.log(`📤 Upload path: ${filePath}`);
 
-      if (uploadError) throw new Error(`Upload failed: ${uploadError.message}`);
+      // Upload with progress tracking
+      // Uses XMLHttpRequest for progress events (fetch doesn't support upload progress)
+      const uploadResult = await uploadWithProgress(file.blob, filePath, (progress) => {
+        setUploadProgress(progress);
+        console.log(`📤 Upload progress: ${progress}%`);
+      });
 
-      const { data: urlData } = supabase.storage.from(bucketName).getPublicUrl(filename);
+      console.log('✅ Upload successful:', uploadResult.url);
 
-      const mediaRecord = {
-        rental_id: rental.id,
-        file_name: filename,
-        original_filename: videoFile.name,
-        file_type: videoFile.blob.type,
-        file_size: videoFile.blob.size,
-        phase: phase === 'opening' ? 'out' : 'in',
-        storage_path: uploadData.path,
-        public_url: urlData.publicUrl,
-        uploaded_at: new Date().toISOString(),
-      };
-
-      const { error: mediaError } = await supabase.from('app_2f7bf469b0_rental_media').insert(mediaRecord);
-      if (mediaError) throw new Error(`Failed to save media record: ${mediaError.message}`);
-
-      let rentalUpdate = {};
-      if(phase === 'closing') {
-          rentalUpdate = { rental_status: 'completed', completed_at: new Date().toISOString() };
-          
-          const { data: updatedRental, error: rentalError } = await supabase
-            .from('app_4c3a7a6153_rentals')
-            .update(rentalUpdate)
-            .eq('id', rental.id)
-            .select('*, vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(*), package:rental_packages(*)')
-            .single();
-          
-          if (rentalError) throw new Error(`Failed to update rental: ${rentalError.message}`);
-          setRental(updatedRental);
-          
-          await loadRentalMedia(rental.id);
-          setVideoRefreshKey(prev => prev + 1);
-          
-          capturedFiles.forEach(file => URL.revokeObjectURL(file.url));
-          setCapturedFiles([]);
-          setClosingModalOpen(false);
-          setIsProcessingVideo(false);
-          
-          const startOdo = rental.start_odometer || 0;
-          const endOdoInput = window.prompt(
-            `Closing video saved successfully!\n\nPlease enter the ENDING odometer reading:\n\nStarting odometer: ${startOdo} km`,
-            ''
-          );
-          
-          if (endOdoInput && parseFloat(endOdoInput) > 0) {
-            const endOdo = parseFloat(endOdoInput);
-            if (endOdo < startOdo) {
-              alert(`❌ Invalid Odometer Reading\n\nEnd odometer (${endOdo} km) must be >= start odometer (${startOdo} km)`);
-            } else {
-              try {
-                const updatedWithOdo = await OverageCalculationService.updateRentalWithOdometer(rental.id, endOdo);
-                
-                if (rental.vehicle_id) {
-                  await supabase.from('saharax_0u4w4d_vehicles')
-                    .update({ current_odometer: endOdo, updated_at: new Date().toISOString() })
-                    .eq('id', rental.vehicle_id);
-                }
-                
-                const distance = endOdo - startOdo;
-                alert(`✅ Ending odometer recorded!\n\nTotal distance: ${distance.toFixed(2)} km`);
-                await loadRentalData();
-              } catch (err) {
-                console.error('Error saving odometer:', err);
-                alert('Failed to save odometer reading.');
-              }
-            }
-          }
-          
-          return;
+      // Generate thumbnail automatically after upload
+      console.log('🖼️ Generating thumbnail...');
+      let thumbnailUrl = null;
+      
+      try {
+        // Use existing generateThumbnailSafe utility
+        const { generateThumbnailSafe } = await import('../../utils/uploadWithRetry');
+        thumbnailUrl = await generateThumbnailSafe(
+          file.url,
+          `rentals/${rental.id}/${type}/thumb_${fileName.replace(/\.[^.]+$/, '.jpg')}`
+        );
+        console.log('✅ Thumbnail generated:', thumbnailUrl);
+      } catch (thumbError) {
+        console.warn('⚠️ Thumbnail generation failed (non-critical):', thumbError);
+        // Continue without thumbnail - not critical
       }
 
+      // Insert into rental_media table so RentalVideos component can display it
+      const phase = type === 'opening' ? 'out' : 'in';
+      const bucket = type === 'opening' ? 'rental-media-opening' : 'rental-media-closing';
+      
+      const mediaRecord = {
+        rental_id: rental.id,
+        phase: phase,
+        file_type: 'video/mp4',
+        file_name: fileName,
+        original_filename: file.name,
+        file_size: file.blob.size,
+        storage_path: filePath,
+        public_url: uploadResult.url,
+        thumbnail_url: thumbnailUrl || null,
+        duration: 0,
+        created_at: new Date().toISOString()
+      };
+
+      const { error: mediaError } = await supabase
+        .from('app_2f7bf469b0_rental_media')
+        .insert([mediaRecord]);
+
+      if (mediaError) {
+        console.error('❌ Failed to insert media record:', mediaError);
+        throw new Error(`Failed to save video record: ${mediaError.message}`);
+      }
+
+      // Also update rental record for backward compatibility
+      const updateField = type === 'opening' ? 'opening_video_url' : 'closing_video_url';
+      const thumbField = type === 'opening' ? 'opening_video_thumbnail' : 'closing_video_thumbnail';
+      
+      const updateData = {
+        [updateField]: uploadResult.url,
+        ...(thumbnailUrl && { [thumbField]: thumbnailUrl })
+      };
+
+      const { error: updateError } = await supabase
+        .from('app_4c3a7a6153_rentals')
+        .update(updateData)
+        .eq('id', rental.id);
+
+      if (updateError) {
+        console.warn('⚠️ Failed to update rental record (non-critical):', updateError);
+      }
+
+      console.log(`✅ ${type} video saved successfully to rental_media table`);
+
+      // Update local state
+      setRental(prev => ({
+        ...prev,
+        ...updateData
+      }));
+
+      // Cleanup
+      capturedFiles.forEach(f => URL.revokeObjectURL(f.url));
+      setCapturedFiles([]);
+      
+      if (type === 'opening') {
+        setOpeningModalOpen(false);
+      } else {
+        setClosingModalOpen(false);
+      }
+
+      alert(`${type === 'opening' ? 'Opening' : 'Closing'} video uploaded successfully!`);
+      
+      // Reload media to show the newly uploaded video
       await loadRentalMedia(rental.id);
+      
+      // Trigger video refresh in RentalVideos component
       setVideoRefreshKey(prev => prev + 1);
       
-      alert(`${phase.charAt(0).toUpperCase() + phase.slice(1)} video saved successfully!`);
-      
-      capturedFiles.forEach(file => URL.revokeObjectURL(file.url));
-      setCapturedFiles([]);
-      if(phase === 'opening') setOpeningModalOpen(false);
-      if(phase === 'closing') setClosingModalOpen(false);
+      console.log('✅ Media list reloaded, video should now be visible');
 
     } catch (error) {
-      console.error('❌ Error:', error);
-      alert(error.message || `Failed to save ${phase} video`);
+      console.error(`❌ Failed to save ${type} video:`, error);
+      alert(`Failed to upload video: ${error.message}\n\nPlease check your internet connection and try again.`);
     } finally {
       setIsProcessingVideo(false);
+      setUploadProgress(0);
     }
   };
+
+  /**
+   * Upload with progress tracking and retry logic
+   * Uses XMLHttpRequest for upload progress events
+   * Retries only on network errors with exponential backoff
+   */
+  const uploadWithProgress = async (blob, path, onProgress) => {
+    const maxRetries = 3;
+    let attempt = 0;
+
+    while (attempt < maxRetries) {
+      try {
+        attempt++;
+        console.log(`📤 Upload attempt ${attempt}/${maxRetries}`);
+
+        // Upload to Supabase Storage
+        const { data, error } = await supabase.storage
+          .from('rental-videos')
+          .upload(path, blob, {
+            contentType: 'video/mp4',
+            upsert: false,
+            onUploadProgress: (progress) => {
+              const percent = Math.round((progress.loaded / progress.total) * 100);
+              onProgress(percent);
+            }
+          });
+
+        if (error) {
+          // Check if it's a network error (retryable)
+          if (error.message.includes('network') || error.message.includes('timeout')) {
+            throw new Error('NETWORK_ERROR: ' + error.message);
+          }
+          throw error;
+        }
+
+        // Get public URL
+        const { data: urlData } = supabase.storage
+          .from('rental-videos')
+          .getPublicUrl(path);
+
+        return {
+          path: data.path,
+          url: urlData.publicUrl
+        };
+
+      } catch (error) {
+        console.error(`❌ Upload attempt ${attempt} failed:`, error);
+
+        // Retry only on network errors
+        if (error.message.startsWith('NETWORK_ERROR') && attempt < maxRetries) {
+          const delay = Math.pow(2, attempt) * 1000; // Exponential backoff: 2s, 4s, 8s
+          console.log(`⏳ Retrying in ${delay/1000}s...`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+          continue;
+        }
+
+        // Non-network error or max retries reached
+        throw error;
+      }
+    }
+
+    throw new Error('Upload failed after maximum retries');
+  };
+
+
+  /**
+   * Upload with progress tracking and retry logic
+   * Uses XMLHttpRequest for upload progress events
+   * Retries only on network errors with exponential backoff
+   */
+  
+
 
 
   const startRental = async () => {
@@ -963,15 +1737,32 @@ export default function RentalDetails() {
   };
 
   const completeRental = async () => {
+    // Prevent duplicate calls
+    if (isProcessingEndOdometer) {
+      return;
+    }
+
+    // Step 1: Check if closing video exists
     if (closingMedia.length === 0) {
       setClosingModalOpen(true);
       return;
     }
 
+    // Step 2: Check if ending odometer is already recorded
+    if (!rental.ending_odometer) {
+      // Show End Odometer Prompt to user
+      setShowEndOdometerPrompt(true);
+      return;
+    }
+
+    // Step 3: If both closing video and ending odometer exist, complete the rental
     try {
       const { error } = await supabase
         .from('app_4c3a7a6153_rentals')
-        .update({ rental_status: 'completed', completed_at: new Date().toISOString() })
+        .update({ 
+          rental_status: 'completed', 
+          completed_at: new Date().toISOString() 
+        })
         .eq('id', rental.id);
 
       if (error) throw error;
@@ -994,7 +1785,6 @@ export default function RentalDetails() {
       alert('Failed to complete rental. Please try again.');
     }
   };
-
   const cancelRental = async () => {
     if (confirm('Are you sure you want to cancel this rental?')) {
       try {
@@ -1081,7 +1871,8 @@ export default function RentalDetails() {
         .select(`
           *,
           vehicle:saharax_0u4w4d_vehicles!app_4c3a7a6153_rentals_vehicle_id_fkey(*),
-          package:rental_packages(*)
+          package:rental_packages(*),
+          extensions:rental_extensions(*)
         `)
         .single();
 
@@ -1215,6 +2006,19 @@ export default function RentalDetails() {
   };
 
   if (loading) return <div className="flex items-center justify-center min-h-screen"><p>Loading...</p></div>;
+
+  // ✅ FIXED: Calculate rental base amount correctly for hourly rentals
+  const calculateRentalBaseAmount = () => {
+    if (!rental) return 0;
+    
+    // For hourly rentals, multiply unit_price by quantity_days (which stores hours)
+    if (rental.rental_type === 'hourly' && rental.quantity_days) {
+      return (rental.unit_price || 0) * (rental.quantity_days || 0);
+    }
+    
+    // For other rental types, use unit_price or total_amount
+    return rental.unit_price || rental.total_amount || 0;
+  };
   if (error) return <div className="flex items-center justify-center min-h-screen"><p>{error}</p></div>;
   if (!rental) return <div className="flex items-center justify-center min-h-screen"><p>Rental not found</p></div>;
 
@@ -1250,6 +2054,7 @@ export default function RentalDetails() {
     end_date: rental.rental_end_date ? new Date(rental.rental_end_date).toLocaleString() : 'N/A',
   };
 
+// ✅ Calculate extension totals before rendering
   return (
     <div className="container mx-auto px-4 py-8 max-w-4xl pb-20 sm:pb-8">
       <div className="flex justify-between items-center mb-6">
@@ -1565,6 +2370,7 @@ export default function RentalDetails() {
                     End Now
                   </Button>
                   
+                  {closingMedia.length === 0 && (
                   <Button 
                     onClick={() => setExtensionModalOpen(true)}
                     className="bg-purple-600 hover:bg-purple-700 text-white px-6 sm:px-8 py-4 sm:py-6 text-base sm:text-lg font-semibold shadow-lg transition-all duration-200 hover:scale-105"
@@ -1572,6 +2378,7 @@ export default function RentalDetails() {
                     <Clock className="w-5 h-5 sm:w-6 sm:h-6 mr-2" />
                     Extend Time
                   </Button>
+                )}
                 </div>
               </div>
             </div>
@@ -1599,6 +2406,21 @@ export default function RentalDetails() {
             onReject={handleRejectExtension}
             isAdmin={isAdmin}
           />
+
+              {/* Completed Rental Message */}
+              {closingMedia.length > 0 && rental.rental_status === 'completed' && (
+                <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="w-5 h-5 text-green-600" />
+                    <div>
+                      <h4 className="font-semibold text-green-900">Rental Completed</h4>
+                      <p className="text-sm text-green-700 mt-1">
+                        This rental has been completed and closed. Extensions are no longer available.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
         </div>
       )}
 
@@ -1646,7 +2468,7 @@ export default function RentalDetails() {
                 <p><strong>End Odometer:</strong> {rental.ending_odometer} km</p>
               )}
               {rental.total_kilometers_driven && (
-                <p><strong>Total Distance:</strong> {rental.total_kilometers_driven.toFixed(2)} km</p>
+                <p><strong>Total Distance:</strong> {(rental.total_kilometers_driven || 0).toFixed(2)} km</p>
               )}
             </div>
           </div>
@@ -1749,7 +2571,7 @@ export default function RentalDetails() {
                       </div>
                       <div className="flex justify-between border-t pt-1">
                         <span className="font-semibold">Total Distance:</span>
-                        <span className="font-bold text-blue-600">{rental.total_kilometers_driven.toFixed(2)} km</span>
+                        <span className="font-bold text-blue-600">{(rental.total_kilometers_driven || 0).toFixed(2)} km</span>
                       </div>
                     </div>
                   </div>
@@ -1783,35 +2605,122 @@ export default function RentalDetails() {
                   
                   {/* Overage Charge */}
                   {rental.overage_charge > 0 && (
-                    <div className="bg-red-50 border border-red-200 rounded-lg p-2 my-2">
-                      <div className="flex justify-between items-start">
-                        <div className="flex-1">
-                          <p className="font-semibold text-red-800 text-sm mb-1">⚠️ Kilometer Overage</p>
-                          <p className="text-xs text-red-700">
-                            {rental.total_kilometers_driven.toFixed(2)} km driven - {rental.included_kilometers} km included = {(rental.total_kilometers_driven - rental.included_kilometers).toFixed(2)} km extra
-                          </p>
-                          <p className="text-xs text-red-700">
-                            {(rental.total_kilometers_driven - rental.included_kilometers).toFixed(2)} km × {rental.extra_km_rate_applied} MAD/km
-                          </p>
-                        </div>
-                        <span className="font-bold text-red-600 text-lg">+{formatCurrency(rental.overage_charge)} MAD</span>
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 my-2">
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-sm font-medium text-yellow-800 flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4" />
+                          Kilometer Overage
+                        </h4>
+                        <span className="px-3 py-1 text-sm font-semibold bg-yellow-100 text-yellow-800 rounded-lg">
+                          +{formatCurrency(rental.overage_charge)} MAD
+                        </span>
+                      </div>
+                      
+                      <div className="space-y-3">
+                        {(() => {
+                          const startKm = rental.start_odometer || 0;
+                          const endKm = rental.ending_odometer || 0;
+                          const totalDistance = rental.total_distance || (endKm - startKm);
+                          const includedKms = rental.package?.included_kilometers || rental.included_kilometers || 100;
+                          const extraKms = Math.max(0, totalDistance - includedKms);
+                          const extraKmRate = rental.package?.extra_km_rate || rental.extra_km_rate_applied || 1.5;
+                          
+                          return (
+                            <>
+                              <div className="grid grid-cols-2 gap-4 text-sm">
+                                <div>
+                                  <span className="text-gray-600">Total Distance:</span>
+                                  <p className="font-medium">{totalDistance.toFixed(2)} km</p>
+                                </div>
+                                <div>
+                                  <span className="text-gray-600">Included Kilometers:</span>
+                                  <p className="font-medium">{includedKms} km</p>
+                                </div>
+                              </div>
+                              
+                              <div className="pt-3 border-t border-yellow-200">
+                                <div className="text-sm">
+                                  <div className="flex justify-between">
+                                    <span>Extra Kilometers:</span>
+                                    <span className="font-medium">{extraKms.toFixed(2)} km</span>
+                                  </div>
+                                  <div className="flex justify-between mt-1">
+                                    <span>Rate per km:</span>
+                                    <span className="font-medium">{extraKmRate.toFixed(2)} MAD/km</span>
+                                  </div>
+                                  <div className="flex justify-between mt-2 pt-2 border-t border-yellow-100">
+                                    <span className="font-semibold">Overage Charge:</span>
+                                    <span className="font-semibold text-red-600">
+                                      +{formatCurrency(rental.overage_charge)} MAD
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
                     </div>
                   )}
+
+
+            {rental.extension_count > 0 && (
+              <>
+                <Separator className="my-4" />
+                <div className="bg-purple-50 border border-purple-200 rounded-lg p-3 my-2">
+                  <div className="flex items-center justify-between mb-3">
+                    <h4 className="text-sm font-medium text-purple-800 flex items-center gap-2">
+                      <Clock className="w-4 h-4" />
+                      Extension Information
+                    </h4>
+                    <span className="px-3 py-1 text-sm font-semibold bg-purple-100 text-purple-800 rounded-lg">
+                      +{formatCurrency(totalExtensionFees || 0)} MAD
+                    </span>
+                  </div>
                   
-                  {/* Extension Fees */}
-                  {rental.total_extension_price > 0 && (
-                    <div className="flex justify-between text-purple-600">
-                      <span className="font-medium">Extension Fees ({rental.total_extended_hours || 0}h):</span>
-                      <span className="font-bold">+{formatCurrency(rental.total_extension_price)} MAD</span>
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <span className="text-gray-600">Total Extensions:</span>
+                        <p className="font-medium">{rental.extension_count}</p>
+                      </div>
+                      <div>
+                        <span className="text-gray-600">Extended Hours:</span>
+                        <p className="font-medium">{totalExtendedHours || 0}h</p>
+                      </div>
                     </div>
-                  )}
+                    
+                    <div className="pt-3 border-t border-purple-200">
+                      <div className="text-sm">
+                        {rental.original_end_date && (
+                          <div className="flex justify-between mb-2">
+                            <span className="text-gray-600">Original End Date:</span>
+                            <span className="font-medium">{new Date(rental.original_end_date).toLocaleString()}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between mt-2 pt-2 border-t border-purple-100">
+                          <span className="font-semibold">Extension Fees:</span>
+                          <span className="font-semibold text-purple-600">
+                            +{formatCurrency(totalExtensionFees || 0)} MAD
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+                  
+
+
+                  
+
                   
                   {/* Grand Total */}
                   <div className="flex justify-between pt-2 border-t-2 border-gray-300 text-lg">
                     <span className="font-bold text-gray-900">Grand Total:</span>
                     <span className="font-bold text-green-600">
-                      {formatCurrency((rental.unit_price || rental.total_amount || 0) + (rental.overage_charge || 0) + (rental.total_extension_price || 0))} MAD
+                      {formatCurrency(calculateRentalBaseAmount() + (rental.overage_charge || 0) + (totalExtensionFees || 0))} MAD
                     </span>
                   </div>
                   
@@ -1823,7 +2732,7 @@ export default function RentalDetails() {
                   
                   {/* ✅ UPDATED: Balance Due Display with Deposit Deduction Logic */}
                   {(() => {
-                    const totalAmount = (rental.unit_price || rental.total_amount || 0) + (rental.overage_charge || 0) + (rental.total_extension_price || 0);
+                    const totalAmount = calculateRentalBaseAmount() + (rental.overage_charge || 0) + (totalExtensionFees || 0);
                     const depositPaid = rental.deposit_amount || 0;
                     const balance = totalAmount - depositPaid;
                     const isCoveredByDeposit = rental.deposit_returned_at && balance > 0;
@@ -1931,22 +2840,6 @@ export default function RentalDetails() {
               </div>
             )}
 
-            {rental.extension_count > 0 && (
-              <>
-                <Separator className="my-4" />
-                <div>
-                  <h4 className="font-semibold mb-3">Extension Information</h4>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                    <p><strong>Total Extensions:</strong> {rental.extension_count}</p>
-                    <p><strong>Extended Hours:</strong> {rental.total_extended_hours || 0}h</p>
-                    <p><strong>Extension Fees:</strong> {formatCurrency(rental.total_extension_price || 0)} MAD</p>
-                    {rental.original_end_date && (
-                      <p><strong>Original End Date:</strong> {new Date(rental.original_end_date).toLocaleString()}</p>
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
 
             {/* Late Fee Warning */}
             {lateFee?.is_late && (
@@ -1963,95 +2856,152 @@ export default function RentalDetails() {
             )}
 
             {/* ✅ UPDATED: Damage Deposit Return Section with Deduction Logic */}
-            {rental?.rental_status === 'completed' && rental?.damage_deposit > 0 && (
-              <div className="mt-4 p-4 border-t border-gray-200">
-                <h4 className="text-lg font-semibold mb-3 text-gray-800">💰 Damage Deposit Return</h4>
-                
-                {(() => {
-                  const depositCalc = calculateDepositReturn();
-                  const isDepositReturned = !!rental.deposit_returned_at;
+            {rental?.rental_status === 'completed' && rental?.damage_deposit > 0 && (() => {
+              const depositCalc = calculateDepositReturn();
+              const isDepositReturned = !!rental.deposit_returned_at;
+              const shouldShowToggle = !isDepositReturned && depositCalc.balanceDue > 0;
+              
+              return (
+                <div className="mt-4 p-4 border-t border-gray-200">
+                  <h4 className="text-lg font-semibold mb-3 text-gray-800">💰 Damage Deposit Return</h4>
                   
-                  return (
-                    <div className="space-y-3">
-                      {/* Deposit Breakdown */}
-                      <div className="bg-blue-50 p-3 rounded-lg space-y-2">
+                  <div className="space-y-3">
+                    {/* Toggle Switch for Deposit Deduction */}
+                    {shouldShowToggle && (
+                      <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg mb-3 border border-gray-200">
+                        <div>
+                          <p className="font-medium text-gray-800">Deduct from damage deposit?</p>
+                          <p className="text-sm text-gray-600">
+                            Toggle ON to deduct unpaid balance of {depositCalc.balanceDue.toFixed(2)} MAD from deposit
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => setDeductFromDeposit(!deductFromDeposit)}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${deductFromDeposit ? 'bg-green-600' : 'bg-gray-300'}`}
+                        >
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${deductFromDeposit ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </button>
+                      </div>
+                    )}
+
+                    {/* Deduction Breakdown - Show when toggle is ON */}
+                    {shouldShowToggle && deductFromDeposit && (
+                      <div className="bg-blue-50 border border-blue-200 p-3 rounded-lg mb-3 space-y-2">
+                        <h5 className="font-semibold text-blue-800">Deduction Breakdown</h5>
+                        
                         <div className="flex justify-between text-sm">
-                          <span className="text-gray-700">Original Damage Deposit:</span>
-                          <span className="font-semibold">{depositCalc.damageDeposit.toFixed(2)} MAD</span>
+                          <span>Original Deposit:</span>
+                          <span className="font-medium">{depositCalc.damageDeposit.toFixed(2)} MAD</span>
                         </div>
                         
-                        {depositCalc.hasDeduction && (
-                          <div className="flex justify-between text-sm text-red-600">
-                            <span>Less: Unpaid Balance:</span>
-                            <span className="font-semibold">-{depositCalc.balanceDue.toFixed(2)} MAD</span>
-                          </div>
-                        )}
+                        <div className="flex justify-between text-sm text-red-600">
+                          <span>Less: Unpaid Balance:</span>
+                          <span className="font-medium">-{depositCalc.balanceDue.toFixed(2)} MAD</span>
+                        </div>
                         
-                        <div className="flex justify-between text-base font-bold border-t border-blue-200 pt-2">
-                          <span className="text-gray-800">Amount to Return:</span>
+                        <div className="flex justify-between text-sm font-bold border-t border-blue-200 pt-2">
+                          <span>Final Return:</span>
                           <span className="text-green-600">{depositCalc.depositReturn.toFixed(2)} MAD</span>
                         </div>
                         
                         {depositCalc.additionalOwed > 0 && (
-                          <div className="flex justify-between text-sm text-red-600 bg-red-50 p-2 rounded mt-2">
-                            <span className="font-semibold">⚠️ Additional Amount Owed:</span>
-                            <span className="font-bold">{depositCalc.additionalOwed.toFixed(2)} MAD</span>
+                          <div className="bg-red-50 p-2 rounded text-sm text-red-700">
+                            ⚠️ Additional {depositCalc.additionalOwed.toFixed(2)} MAD still owed
                           </div>
                         )}
                       </div>
-
-                      {/* Signature Section */}
-                      {!isDepositReturned ? (
-                        <div className="flex items-center gap-3">
-                          <button
-                            onClick={() => setShowDepositSignatureModal(true)}
-                            className="flex-1 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-                            disabled={depositCalc.depositReturn <= 0}
-                          >
-                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                            </svg>
-                            Sign Here - Confirm Deposit Received
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="bg-green-50 border border-green-200 p-3 rounded-lg">
-                          <div className="flex items-center gap-2 text-green-700 mb-2">
-                            <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
-                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
-                            </svg>
-                            <span className="font-semibold">Deposit Returned</span>
-                          </div>
-                          <div className="text-sm text-gray-700 space-y-1">
-                            <p><strong>Amount:</strong> {rental.deposit_return_amount?.toFixed(2)} MAD</p>
-                            <p><strong>Date:</strong> {new Date(rental.deposit_returned_at).toLocaleString()}</p>
-                            {rental.deposit_deduction_amount > 0 && (
-                              <p className="text-red-600"><strong>Deducted:</strong> {rental.deposit_deduction_amount.toFixed(2)} MAD (Unpaid balance)</p>
-                            )}
-                          </div>
-                          {rental.deposit_return_signature_url && (
-                            <div className="mt-2">
-                              <p className="text-sm font-medium text-gray-700 mb-1">Customer Signature:</p>
-                              <img 
-                                src={rental.deposit_return_signature_url} 
-                                alt="Deposit Return Signature" 
-                                className="border border-gray-300 rounded max-w-xs h-24 object-contain bg-white"
-                              />
-                            </div>
-                          )}
+                    )}
+                    
+                    {/* Deposit Breakdown */}
+                    <div className="bg-blue-50 p-3 rounded-lg space-y-2">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-gray-700">Original Damage Deposit:</span>
+                        <span className="font-semibold">{depositCalc.damageDeposit.toFixed(2)} MAD</span>
+                      </div>
+                      
+                      {depositCalc.hasDeduction && (
+                        <div className="flex justify-between text-sm text-red-600">
+                          <span>Less: Unpaid Balance:</span>
+                          <span className="font-semibold">-{depositCalc.balanceDue.toFixed(2)} MAD</span>
                         </div>
                       )}
-
-                      {depositCalc.depositReturn <= 0 && !isDepositReturned && (
-                        <div className="bg-yellow-50 border border-yellow-200 p-3 rounded-lg text-sm text-yellow-800">
-                          ⚠️ No deposit to return. {depositCalc.hasDeduction ? 'Unpaid balance has been deducted from damage deposit.' : 'Damage deposit was 0.'}
+                      
+                      <div className="flex justify-between text-base font-bold border-t border-blue-200 pt-2">
+                        <span className="text-gray-800">Amount to Return:</span>
+                        <span className="text-green-600">{depositCalc.depositReturn.toFixed(2)} MAD</span>
+                      </div>
+                      
+                      {depositCalc.additionalOwed > 0 && (
+                        <div className="flex justify-between text-sm text-red-600 bg-red-50 p-2 rounded mt-2">
+                          <span className="font-semibold">⚠️ Additional Amount Owed:</span>
+                          <span className="font-bold">{depositCalc.additionalOwed.toFixed(2)} MAD</span>
                         </div>
                       )}
                     </div>
-                  );
-                })()}
-              </div>
-            )}
+
+                    {/* Undo Button */}
+                    {deductFromDeposit && !isDepositReturned && (
+                      <button
+                        onClick={() => setDeductFromDeposit(false)}
+                        className="text-sm text-gray-600 hover:text-gray-800 underline mb-2"
+                      >
+                        Undo deduction
+                      </button>
+                    )}
+                    
+                    {/* Signature Section */}
+                    {!isDepositReturned ? (
+                      <div className="flex items-center gap-3">
+                        <button
+                          onClick={() => setShowDepositSignatureModal(true)}
+                          className="flex-1 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                          disabled={depositCalc.depositReturn <= 0}
+                        >
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                          </svg>
+                          Sign Here - Confirm Deposit Received
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="bg-green-50 border border-green-200 p-3 rounded-lg">
+                        <div className="flex items-center gap-2 text-green-700 mb-2">
+                          <svg className="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                            <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                          </svg>
+                          <span className="font-semibold">Deposit Returned</span>
+                        </div>
+                        <div className="text-sm text-gray-700 space-y-1">
+                          <p><strong>Amount:</strong> {rental.deposit_return_amount?.toFixed(2)} MAD</p>
+                          <p><strong>Date:</strong> {new Date(rental.deposit_returned_at).toLocaleString()}</p>
+                          {rental.deposit_deduction_amount > 0 && (
+                            <p className="text-red-600"><strong>Deducted:</strong> {rental.deposit_deduction_amount.toFixed(2)} MAD (Unpaid balance)</p>
+                          )}
+                        </div>
+                        {rental.deposit_return_signature_url && (
+                          <div className="mt-2">
+                            <p className="text-sm font-medium text-gray-700 mb-1">Customer Signature:</p>
+                            <img 
+                              src={rental.deposit_return_signature_url} 
+                              alt="Deposit Return Signature" 
+                              className="border border-gray-300 rounded max-w-xs h-24 object-contain bg-white"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {depositCalc.depositReturn <= 0 && !isDepositReturned && (
+                      <div className="bg-yellow-50 border border-yellow-200 p-3 rounded-lg text-sm text-yellow-800">
+                        ⚠️ No deposit to return. {depositCalc.hasDeduction ? 'Unpaid balance has been deducted from damage deposit.' : 'Damage deposit was 0.'}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })()}
+
+            
 
             {/* ✅ UPDATED: Desktop-only Mark as Paid button */}
             <div className="mt-4 flex flex-wrap items-center gap-4">
@@ -2060,7 +3010,7 @@ export default function RentalDetails() {
                 {/* Desktop-only Mark as Paid button */}
                 <div className="hidden sm:block">
                     {(() => {
-                        const totalAmount = (rental.unit_price || rental.total_amount || 0) + (rental.overage_charge || 0) + (rental.total_extension_price || 0);
+                        const totalAmount = calculateRentalBaseAmount() + (rental.overage_charge || 0) + (totalExtensionFees || 0);
                         const depositPaid = rental.deposit_amount || 0;
                         const balanceDue = totalAmount - depositPaid;
                         const damageDeposit = parseFloat(rental?.damage_deposit || 0);
@@ -2082,7 +3032,7 @@ export default function RentalDetails() {
                     })()}
                 </div>
                 {(() => {
-                  const totalAmount = (rental.unit_price || rental.total_amount || 0) + (rental.overage_charge || 0) + (rental.total_extension_price || 0);
+                  const totalAmount = calculateRentalBaseAmount() + (rental.overage_charge || 0) + (totalExtensionFees || 0);
                   const depositPaid = rental.deposit_amount || 0;
                   const balanceDue = totalAmount - depositPaid;
                   const damageDeposit = parseFloat(rental?.damage_deposit || 0);
@@ -2133,7 +3083,12 @@ export default function RentalDetails() {
       </div>
       
       {/* Enhanced Opening Video Modal */}
-      <Dialog open={openingModalOpen} onOpenChange={setOpeningModalOpen}>
+      <Dialog open={openingModalOpen} onOpenChange={(open) => {
+        setOpeningModalOpen(open);
+        if (!open && isRecording) {
+          stopCameraRecording();
+        }
+      }}>
         <DialogContent className="w-[90vw] max-w-md p-3 sm:p-6">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base sm:text-lg pr-8">
@@ -2153,14 +3108,97 @@ export default function RentalDetails() {
               </AlertDescription>
             </Alert>
 
-            <Button 
-              onClick={uploadFromGallery} 
-              disabled={isUploading || capturedFiles.length > 0}
-              className="w-full py-3 text-sm sm:text-base bg-blue-600 hover:bg-blue-700 text-white font-medium"
-            >
-              <Upload className="w-4 h-4 sm:w-5 sm:h-5 mr-2 flex-shrink-0" />
-              {isUploading ? 'Uploading...' : 'Choose Video File'}
-            </Button>
+            <div className="flex flex-col gap-2">
+              {!isRecording ? (
+                <>
+                  <Button 
+                    onClick={startCameraRecording}
+                    disabled={capturedFiles.length > 0}
+                    className="w-full py-3 text-sm sm:text-base bg-red-600 hover:bg-red-700 text-white font-medium"
+                  >
+                    <Camera className="w-4 h-4 sm:w-5 sm:h-5 mr-2 flex-shrink-0" />
+                    Record Video
+                  </Button>
+                  <Button 
+                    onClick={uploadFromGallery} 
+                    disabled={isUploading || capturedFiles.length > 0}
+                    className="w-full py-3 text-sm sm:text-base bg-blue-600 hover:bg-blue-700 text-white font-medium"
+                  >
+                    <Upload className="w-4 h-4 sm:w-5 sm:h-5 mr-2 flex-shrink-0" />
+                    {isUploading ? 'Uploading...' : 'Choose from Gallery'}
+                  </Button>
+                </>
+              ) : (
+                <Button 
+                  onClick={stopCameraRecording}
+                  className="w-full py-3 text-sm sm:text-base bg-red-600 hover:bg-red-700 text-white font-medium"
+                >
+                  <StopCircle className="w-4 h-4 sm:w-5 sm:h-5 mr-2 flex-shrink-0" />
+                  Stop Recording
+                </Button>
+              )}
+            </div>
+
+            {/* Camera Preview */}
+            {isRecording && (
+              <div className="relative bg-black rounded-lg overflow-hidden">
+                {/* Hidden video element for stream capture */}
+                <video 
+                  ref={videoPreviewRef}
+                  muted
+                  playsInline
+                  webkit-playsinline="true"
+                  style={{ display: 'none' }}
+                />
+                
+                {/* Visible canvas for rendering */}
+                <canvas 
+                  ref={canvasRef}
+                  className="w-full rounded-lg"
+                  style={{ 
+                    maxHeight: '400px',
+                    backgroundColor: '#000',
+                    objectFit: 'contain'
+                  }}
+                />
+                
+                {/* Wake-up trigger: invisible moving spinner */}
+                <div 
+                  className="absolute top-0 left-0 w-1 h-1 opacity-0"
+                  style={{ animation: 'spin 1s linear infinite' }}
+                />
+                
+                <div className="absolute top-2 right-2 flex gap-2">
+                  <Button
+                    onClick={toggleTorch}
+                    size="sm"
+                    className="bg-black/50 hover:bg-black/70"
+                  >
+                    <Flashlight className={`w-4 h-4 ${torchEnabled ? 'text-yellow-400' : 'text-white'}`} />
+                  </Button>
+                  <Button
+                    onClick={switchCamera}
+                    size="sm"
+                    className="bg-black/50 hover:bg-black/70"
+                    title="Switch Camera"
+                  >
+                    <svg 
+                      className="w-4 h-4 text-white" 
+                      fill="none" 
+                      stroke="currentColor" 
+                      viewBox="0 0 24 24"
+                    >
+                      <path 
+                        strokeLinecap="round" 
+                        strokeLinejoin="round" 
+                        strokeWidth={2} 
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" 
+                      />
+                    </svg>
+                  </Button>
+                </div>
+              </div>
+            )}
 
             {capturedFiles.length > 0 && (
               <div className="space-y-2 sm:space-y-3">
@@ -2186,7 +3224,7 @@ export default function RentalDetails() {
                             <div className="flex items-center gap-1 sm:gap-2 mt-1">
                               <FileVideo className="w-3 h-3 text-gray-500 flex-shrink-0" />
                               <p className="text-xs text-gray-500">
-                                {formatFileSize(file.size)}
+                                {formatFileSize(file.size)} • {file.source}
                               </p>
                             </div>
                           </div>
@@ -2212,6 +3250,7 @@ export default function RentalDetails() {
                 variant="outline" 
                 onClick={() => {
                   setOpeningModalOpen(false);
+                  if (isRecording) stopCameraRecording();
                   capturedFiles.forEach(file => URL.revokeObjectURL(file.url));
                   setCapturedFiles([]);
                 }}
@@ -2227,7 +3266,7 @@ export default function RentalDetails() {
                 {isProcessingVideo ? (
                   <>
                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                    Saving...
+                    {uploadProgress > 0 ? `Uploading... ${uploadProgress}%` : 'Saving...'}
                   </>
                 ) : (
                   <>
@@ -2242,7 +3281,12 @@ export default function RentalDetails() {
       </Dialog>
       
       {/* Enhanced Closing Video Modal */}
-      <Dialog open={closingModalOpen} onOpenChange={setClosingModalOpen}>
+      <Dialog open={closingModalOpen} onOpenChange={(open) => {
+        setClosingModalOpen(open);
+        if (!open && isRecording) {
+          stopCameraRecording();
+        }
+      }}>
         <DialogContent className="w-[90vw] max-w-md p-3 sm:p-6">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base sm:text-lg pr-8">
@@ -2262,14 +3306,97 @@ export default function RentalDetails() {
               </AlertDescription>
             </Alert>
 
-            <Button 
-              onClick={uploadFromGallery} 
-              disabled={isUploading || capturedFiles.length > 0}
-              className="w-full py-3 text-sm sm:text-base bg-blue-600 hover:bg-blue-700 text-white font-medium"
-            >
-              <Upload className="w-4 h-4 sm:w-5 sm:h-5 mr-2 flex-shrink-0" />
-              {isUploading ? 'Uploading...' : 'Choose Video File'}
-            </Button>
+            <div className="flex flex-col gap-2">
+              {!isRecording ? (
+                <>
+                  <Button 
+                    onClick={startCameraRecording}
+                    disabled={capturedFiles.length > 0}
+                    className="w-full py-3 text-sm sm:text-base bg-red-600 hover:bg-red-700 text-white font-medium"
+                  >
+                    <Camera className="w-4 h-4 sm:w-5 sm:h-5 mr-2 flex-shrink-0" />
+                    Record Video
+                  </Button>
+                  <Button 
+                    onClick={uploadFromGallery} 
+                    disabled={isUploading || capturedFiles.length > 0}
+                    className="w-full py-3 text-sm sm:text-base bg-blue-600 hover:bg-blue-700 text-white font-medium"
+                  >
+                    <Upload className="w-4 h-4 sm:w-5 sm:h-5 mr-2 flex-shrink-0" />
+                    {isUploading ? 'Uploading...' : 'Choose from Gallery'}
+                  </Button>
+                </>
+              ) : (
+                <Button 
+                  onClick={stopCameraRecording}
+                  className="w-full py-3 text-sm sm:text-base bg-red-600 hover:bg-red-700 text-white font-medium"
+                >
+                  <StopCircle className="w-4 h-4 sm:w-5 sm:h-5 mr-2 flex-shrink-0" />
+                  Stop Recording
+                </Button>
+              )}
+            </div>
+
+            {/* Camera Preview */}
+            {isRecording && (
+              <div className="relative bg-black rounded-lg overflow-hidden">
+                {/* Hidden video element for stream capture */}
+                <video 
+                  ref={videoPreviewRef}
+                  muted
+                  playsInline
+                  webkit-playsinline="true"
+                  style={{ display: 'none' }}
+                />
+                
+                {/* Visible canvas for rendering */}
+                <canvas 
+                  ref={canvasRef}
+                  className="w-full rounded-lg"
+                  style={{ 
+                    maxHeight: '400px',
+                    backgroundColor: '#000',
+                    objectFit: 'contain'
+                  }}
+                />
+                
+                {/* Wake-up trigger: invisible moving spinner */}
+                <div 
+                  className="absolute top-0 left-0 w-1 h-1 opacity-0"
+                  style={{ animation: 'spin 1s linear infinite' }}
+                />
+                
+                <div className="absolute top-2 right-2 flex gap-2">
+                  <Button
+                    onClick={toggleTorch}
+                    size="sm"
+                    className="bg-black/50 hover:bg-black/70"
+                  >
+                    <Flashlight className={`w-4 h-4 ${torchEnabled ? 'text-yellow-400' : 'text-white'}`} />
+                  </Button>
+                  <Button
+                    onClick={switchCamera}
+                    size="sm"
+                    className="bg-black/50 hover:bg-black/70"
+                    title="Switch Camera"
+                  >
+                    <svg 
+                      className="w-4 h-4 text-white" 
+                      fill="none" 
+                      stroke="currentColor" 
+                      viewBox="0 0 24 24"
+                    >
+                      <path 
+                        strokeLinecap="round" 
+                        strokeLinejoin="round" 
+                        strokeWidth={2} 
+                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" 
+                      />
+                    </svg>
+                  </Button>
+                </div>
+              </div>
+            )}
 
             {capturedFiles.length > 0 && (
               <div className="space-y-2 sm:space-y-3">
@@ -2295,7 +3422,7 @@ export default function RentalDetails() {
                             <div className="flex items-center gap-1 sm:gap-2 mt-1">
                               <FileVideo className="w-3 h-3 text-gray-500 flex-shrink-0" />
                               <p className="text-xs text-gray-500">
-                                {formatFileSize(file.size)}
+                                {formatFileSize(file.size)} • {file.source}
                               </p>
                             </div>
                           </div>
@@ -2321,6 +3448,7 @@ export default function RentalDetails() {
                 variant="outline" 
                 onClick={() => {
                   setClosingModalOpen(false);
+                  if (isRecording) stopCameraRecording();
                   capturedFiles.forEach(file => URL.revokeObjectURL(file.url));
                   setCapturedFiles([]);
                 }}
@@ -2336,7 +3464,7 @@ export default function RentalDetails() {
                 {isProcessingVideo ? (
                   <>
                     <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin mr-2" />
-                    Saving...
+                    {uploadProgress > 0 ? `Uploading... ${uploadProgress}%` : 'Saving...'}
                   </>
                 ) : (
                   <>
@@ -2438,7 +3566,18 @@ export default function RentalDetails() {
         title="Damage Deposit Return Authorization"
         description={(() => {
           const depositCalc = calculateDepositReturn();
-          return `I confirm receipt of ${depositCalc.depositReturn.toFixed(2)} MAD as damage deposit return.\n\nBreakdown:\n• Original Deposit: ${depositCalc.damageDeposit.toFixed(2)} MAD${depositCalc.hasDeduction ? `\n• Less: Unpaid Balance: ${depositCalc.balanceDue.toFixed(2)} MAD` : ''}\n• Net Return: ${depositCalc.depositReturn.toFixed(2)} MAD`;
+          if (deductFromDeposit && depositCalc.hasDeduction) {
+            return `I confirm receipt of ${depositCalc.depositReturn.toFixed(2)} MAD as damage deposit return.
+
+Breakdown:
+• Original Deposit: ${depositCalc.damageDeposit.toFixed(2)} MAD
+• Less: Unpaid Balance: ${depositCalc.balanceDue.toFixed(2)} MAD
+• Net Return: ${depositCalc.depositReturn.toFixed(2)} MAD${depositCalc.additionalOwed > 0 ? `
+
+⚠️ Note: Additional ${depositCalc.additionalOwed.toFixed(2)} MAD is still owed.` : ''}`;
+          } else {
+            return `I confirm receipt of ${depositCalc.depositReturn.toFixed(2)} MAD as full damage deposit return.`;
+          }
         })()}
       />
 
@@ -2507,7 +3646,7 @@ export default function RentalDetails() {
         </div>
         <div className="flex gap-2">
             {(() => {
-                const totalAmount = (rental.unit_price || rental.total_amount || 0) + (rental.overage_charge || 0) + (rental.total_extension_price || 0);
+                const totalAmount = calculateRentalBaseAmount() + (rental.overage_charge || 0) + (totalExtensionFees || 0);
                 const depositPaid = rental.deposit_amount || 0;
                 const balanceDue = totalAmount - depositPaid;
                 const damageDeposit = parseFloat(rental?.damage_deposit || 0);
@@ -2528,7 +3667,7 @@ export default function RentalDetails() {
                 );
             })()}
             {(() => {
-                const totalAmount = (rental.unit_price || rental.total_amount || 0) + (rental.overage_charge || 0) + (rental.total_extension_price || 0);
+                const totalAmount = calculateRentalBaseAmount() + (rental.overage_charge || 0) + (totalExtensionFees || 0);
                 const depositPaid = rental.deposit_amount || 0;
                 const balanceDue = totalAmount - depositPaid;
                 const damageDeposit = parseFloat(rental?.damage_deposit || 0);

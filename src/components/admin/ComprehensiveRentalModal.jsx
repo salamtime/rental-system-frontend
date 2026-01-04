@@ -89,20 +89,33 @@ const ComprehensiveRentalModal = ({ isOpen, onClose, onSubmit, vehicles = [] }) 
     return `${name} - Plate: ${plate}`;
   };
 
-  // Calculate days between two dates
-  const calculateDaysBetween = (startDate, endDate) => {
+  // ✅ FIXED: Calculate duration based on rental type (days OR hours)
+  const calculateDuration = (startDate, endDate, startTime, endTime, rentalType) => {
     if (!startDate || !endDate) return 0;
     
     const start = new Date(startDate);
     const end = new Date(endDate);
     
-    // Calculate the difference in milliseconds
+    // For hourly rentals, include time in calculation
+    if (rentalType === 'hourly' && startTime && endTime && startTime !== '--:--' && endTime !== '--:--') {
+      const [startHours, startMinutes] = startTime.split(':').map(Number);
+      const [endHours, endMinutes] = endTime.split(':').map(Number);
+      
+      start.setHours(startHours, startMinutes, 0, 0);
+      end.setHours(endHours, endMinutes, 0, 0);
+      
+      // Calculate hours
+      const diffTime = Math.abs(end - start);
+      const diffHours = Math.ceil(diffTime / (1000 * 60 * 60));
+      
+      return Math.max(diffHours, 1); // Minimum 1 hour
+    }
+    
+    // For daily rentals, calculate days
     const diffTime = Math.abs(end - start);
-    // Convert to days
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     
-    // Minimum 1 day for same-day rentals
-    return Math.max(diffDays, 1);
+    return Math.max(diffDays, 1); // Minimum 1 day
   };
 
   // FIXED: Reset form when modal opens/closes
@@ -116,16 +129,22 @@ const ComprehensiveRentalModal = ({ isOpen, onClose, onSubmit, vehicles = [] }) 
     }
   }, [isOpen]);
 
-  // Auto-calculate days when dates change
+  // ✅ FIXED: Auto-calculate duration when dates/times/rental_type change
   useEffect(() => {
     if (formData.start_date && formData.end_date) {
-      const days = calculateDaysBetween(formData.start_date, formData.end_date);
+      const duration = calculateDuration(
+        formData.start_date, 
+        formData.end_date, 
+        formData.start_time, 
+        formData.end_time,
+        formData.rental_type
+      );
       setFormData(prev => ({
         ...prev,
-        quantity_days: days
+        quantity_days: duration
       }));
     }
-  }, [formData.start_date, formData.end_date]);
+  }, [formData.start_date, formData.end_date, formData.start_time, formData.end_time, formData.rental_type]);
 
   // FIXED: Enhanced pricing calculation with payment status logic
   useEffect(() => {
@@ -237,7 +256,7 @@ const ComprehensiveRentalModal = ({ isOpen, onClose, onSubmit, vehicles = [] }) 
     }
   };
 
-  // FIXED: Enhanced rental type change with proper pricing update
+  // ✅ FIXED: Enhanced rental type change with proper pricing update
   const handleRentalTypeChange = (e) => {
     const rentalType = e.target.value;
     
@@ -295,6 +314,13 @@ const ComprehensiveRentalModal = ({ isOpen, onClose, onSubmit, vehicles = [] }) 
       if (!formData.start_date || !formData.end_date) {
         throw new Error('Start and end dates are required');
       }
+      
+      // ✅ FIXED: Validate time fields for hourly rentals
+      if (formData.rental_type === 'hourly') {
+        if (!formData.start_time || formData.start_time === '--:--' || !formData.end_time || formData.end_time === '--:--') {
+          throw new Error('Start and end times are required for hourly rentals');
+        }
+      }
 
       await onSubmit(formData);
       
@@ -338,29 +364,29 @@ const ComprehensiveRentalModal = ({ isOpen, onClose, onSubmit, vehicles = [] }) 
             <div className="space-y-2 text-sm">
               <div className="flex items-center gap-2">
                 <CheckCircle className="h-4 w-4 text-green-600" />
-                <span className="font-medium text-green-700">🔧 UX FIXES APPLIED:</span>
-                <span className="text-green-700">Modal resets + Payment logic + Clean form</span>
+                <span className="font-medium text-green-700">🔧 HOURLY RENTAL FIX APPLIED:</span>
+                <span className="text-green-700">Hours calculation + Time validation</span>
               </div>
               
               <div className="flex items-center gap-2">
                 <Info className="h-4 w-4 text-blue-600" />
                 <span className="font-medium">Status:</span>
-                <span>Available Vehicles: {availableVehicles.length} | Payment: {formData.payment_status} | Deposit: {formData.deposit_amount} MAD</span>
+                <span>Type: {formData.rental_type} | Duration: {formData.quantity_days} {formData.rental_type === 'hourly' ? 'hours' : 'days'} | Rate: {formData.unit_price} MAD</span>
               </div>
 
               <div className="mt-3">
                 <div className="font-medium text-green-700 mb-1">✅ Fixed Issues:</div>
                 <div className="flex items-center gap-1 text-green-700">
                   <CheckCircle className="h-3 w-3" />
-                  <span>Modal resets on close/open for clean forms</span>
+                  <span>Hourly rentals now calculate hours (not days)</span>
                 </div>
                 <div className="flex items-center gap-1 text-green-700">
                   <CheckCircle className="h-3 w-3" />
-                  <span>"Paid" status auto-sets deposit = total amount</span>
+                  <span>Grand Total = Rate × Hours for hourly rentals</span>
                 </div>
                 <div className="flex items-center gap-1 text-green-700">
                   <CheckCircle className="h-3 w-3" />
-                  <span>Subtotal kept for calculation transparency</span>
+                  <span>Time fields required for hourly rentals</span>
                 </div>
               </div>
             </div>
@@ -526,7 +552,7 @@ const ComprehensiveRentalModal = ({ isOpen, onClose, onSubmit, vehicles = [] }) 
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Start Time
+                  Start Time {formData.rental_type === 'hourly' && '*'}
                 </label>
                 <div className="relative">
                   <input
@@ -535,15 +561,19 @@ const ComprehensiveRentalModal = ({ isOpen, onClose, onSubmit, vehicles = [] }) 
                     value={formData.start_time}
                     onChange={handleInputChange}
                     className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                    required={formData.rental_type === 'hourly'}
                     disabled={loading}
                   />
                   <Clock className="absolute right-3 top-2.5 h-4 w-4 text-gray-400 pointer-events-none" />
                 </div>
+                {formData.rental_type === 'hourly' && (
+                  <p className="text-xs text-blue-600 mt-1">⏰ Required for hourly rentals</p>
+                )}
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  End Time
+                  End Time {formData.rental_type === 'hourly' && '*'}
                 </label>
                 <div className="relative">
                   <input
@@ -552,10 +582,14 @@ const ComprehensiveRentalModal = ({ isOpen, onClose, onSubmit, vehicles = [] }) 
                     value={formData.end_time}
                     onChange={handleInputChange}
                     className="w-full border border-gray-300 rounded-md px-3 py-2 focus:ring-blue-500 focus:border-blue-500"
+                    required={formData.rental_type === 'hourly'}
                     disabled={loading}
                   />
                   <Clock className="absolute right-3 top-2.5 h-4 w-4 text-gray-400 pointer-events-none" />
                 </div>
+                {formData.rental_type === 'hourly' && (
+                  <p className="text-xs text-blue-600 mt-1">⏰ Required for hourly rentals</p>
+                )}
               </div>
             </div>
           </div>
@@ -606,7 +640,7 @@ const ComprehensiveRentalModal = ({ isOpen, onClose, onSubmit, vehicles = [] }) 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Quantity (Days) *
+                  Duration ({formData.rental_type === 'hourly' ? 'Hours' : 'Days'}) *
                 </label>
                 <input
                   type="number"
@@ -618,12 +652,14 @@ const ComprehensiveRentalModal = ({ isOpen, onClose, onSubmit, vehicles = [] }) 
                   step="1"
                   disabled={loading}
                 />
-                <p className="text-xs text-green-600 mt-1">🗓️ Auto-calculated from dates</p>
+                <p className="text-xs text-green-600 mt-1">
+                  {formData.rental_type === 'hourly' ? '⏰ Auto-calculated from date/time' : '🗓️ Auto-calculated from dates'}
+                </p>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Unit Price (MAD) *
+                  Unit Price (MAD/{formData.rental_type === 'hourly' ? 'hour' : 'day'}) *
                 </label>
                 <input
                   type="number"
@@ -645,7 +681,9 @@ const ComprehensiveRentalModal = ({ isOpen, onClose, onSubmit, vehicles = [] }) 
                 <div className="w-full border border-gray-300 rounded-md px-3 py-2 bg-gray-50 text-gray-700">
                   {formData.subtotal.toFixed(2)} MAD
                 </div>
-                <p className="text-xs text-gray-500 mt-1">ℹ️ Quantity × Unit Price (kept for transparency)</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  ℹ️ {formData.rental_type === 'hourly' ? 'Hours' : 'Days'} × Unit Price
+                </p>
               </div>
 
               <div>

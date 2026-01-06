@@ -361,12 +361,13 @@ const ViewCustomerDetailsDrawer = ({
                 {rentalHistory.length > 0 ? (
                   <div className="space-y-3 max-h-60 overflow-y-auto">
                     {rentalHistory.map(r => (
-                      <Link to={`/admin/rentals/${r.id}`} key={r.id} className="block p-3 bg-white rounded-lg border hover:bg-gray-100">
-                        <div className="flex justify-between items-center">
+                      <Link to={`/admin/rentals/${r.id}`} key={r.id} className="block p-3 bg-white rounded-lg border hover:bg-gray-100 transition-colors">
+                        <div className="flex justify-between items-center mb-1">
                           <p className="font-semibold text-sm">{r.vehicle?.name || 'Unknown Vehicle'}</p>
                           <span className={`text-xs px-2 py-0.5 rounded-full ${r.rental_status === 'completed' ? 'bg-blue-100 text-blue-800' : r.rental_status === 'active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}`}>{r.rental_status}</span>
                         </div>
-                        <p className="text-xs text-gray-500">{formatDate(r.rental_start_date)} - {formatDate(r.rental_end_date)}</p>
+                        <p className="text-xs text-gray-500 mb-1">{formatDate(r.rental_start_date)} - {formatDate(r.rental_end_date)}</p>
+                        <p className="text-xs text-blue-600 font-mono">Rental ID: {r.rental_id || r.id}</p>
                       </Link>
                     ))}
                   </div>

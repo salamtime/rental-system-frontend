@@ -1,8 +1,9 @@
 import { forwardRef } from "react";
+import { Printer } from "lucide-react";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
 
-const InvoiceTemplate = forwardRef(({ rental, logoUrl, stampUrl }, ref) => {
+const ContractTemplate = forwardRef(({ rental, logoUrl, stampUrl }, ref) => {
   if (!rental) {
     return <div ref={ref}>No rental data available.</div>;
   }
@@ -37,6 +38,7 @@ const InvoiceTemplate = forwardRef(({ rental, logoUrl, stampUrl }, ref) => {
     ending_odometer,
     original_end_date,
     extensions,
+    payment_status,
   } = rental;
 
   // ✅ Enhanced data extraction with fallback logic for kilometers
@@ -67,6 +69,22 @@ const InvoiceTemplate = forwardRef(({ rental, logoUrl, stampUrl }, ref) => {
   // Use calculated values if array exists, otherwise use direct values
   const displayHours = extensionsList.length > 0 ? calculatedHours : (total_extended_hours || 0);
   const displayPrice = extensionsList.length > 0 ? calculatedPrice : (total_extension_price || 0);
+
+  // ✅ NEW: Date formatting helper function
+  const formatContractDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    try {
+      return new Date(dateString).toLocaleDateString('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch {
+      return dateString;
+    }
+  };
 
   const getCorrectSignatureUrl = (url) => {
     if (!url) {
@@ -130,11 +148,48 @@ const InvoiceTemplate = forwardRef(({ rental, logoUrl, stampUrl }, ref) => {
     <div className="max-w-3xl mx-auto p-4 sm:p-6 bg-white rounded-lg shadow-lg print:shadow-none font-sans print:p-0">
       <style>{`
         @media print {
-          body { margin: 0; padding: 0; }
-          .page-break { page-break-before: always; }
-          .no-print { display: none; }
-          .financial-section { page-break-inside: avoid; }
-          .signature-section { page-break-inside: avoid; }
+          body { 
+            margin: 0 !important; 
+            padding: 0 !important; 
+            background: white !important;
+          }
+          
+          .no-print { 
+            display: none !important; 
+          }
+          
+          #rental-contract-to-print {
+            padding: 0 !important;
+            margin: 0 !important;
+            box-shadow: none !important;
+          }
+          
+          .max-w-3xl {
+            max-width: 210mm !important;
+            margin: 0 auto !important;
+          }
+          
+          .bg-white {
+            background: white !important;
+          }
+          
+          .page-break { 
+            page-break-before: always !important;
+            margin-top: 20mm !important;
+          }
+          
+          .financial-section { 
+            page-break-inside: avoid; 
+          }
+          
+          .signature-section { 
+            page-break-inside: avoid; 
+          }
+          
+          button {
+            display: none !important;
+          }
+          
           -webkit-print-color-adjust: exact;
           print-color-adjust: exact;
         }
@@ -173,14 +228,28 @@ const InvoiceTemplate = forwardRef(({ rental, logoUrl, stampUrl }, ref) => {
             <div>
               <h3 className="text-sm font-semibold text-gray-800 border-b pb-1 mb-1">Vehicle Details</h3>
               <div className="text-xs space-y-0.5">
-                <p><strong>Vehicle:</strong> {vehicle_details?.name || "Not specified"}</p>
-                {vehicle_details?.plate_number && <p><strong>Plate:</strong> {vehicle_details.plate_number}</p>}
+                <p><strong>Vehicle:</strong> {vehicle_details?.name || rental?.vehicle?.name || "Not specified"}</p>
+                {(vehicle_details?.model || rental?.vehicle?.model) && (
+                  <p><strong>Model:</strong> {vehicle_details?.model || rental?.vehicle?.model}</p>
+                )}
+                {(vehicle_details?.plate_number || rental?.vehicle?.plate_number) && (
+                  <p><strong>Plate:</strong> {vehicle_details?.plate_number || rental?.vehicle?.plate_number}</p>
+                )}
               </div>
               <h3 className="text-sm font-semibold text-gray-800 border-b pb-1 mb-1 mt-2">Rental Period</h3>
               <div className="text-xs space-y-0.5">
-                <p><strong>Start:</strong> {start_date || "N/A"}</p>
-                <p><strong>End:</strong> {end_date || "N/A"}</p>
+                <p><strong>Start:</strong> {formatContractDate(start_date || rental?.rental_start_date)}</p>
+                <p><strong>End:</strong> {formatContractDate(end_date || rental?.rental_end_date)}</p>
               </div>
+              {/* ✅ NEW: Odometer Section */}
+              {(start_odometer || rental?.start_odometer) && (
+                <div className="text-xs space-y-0.5 mt-1">
+                  <p><strong>Start Odometer:</strong> {start_odometer || rental?.start_odometer} km</p>
+                  {(ending_odometer || rental?.ending_odometer) && (
+                    <p><strong>Return Odometer:</strong> {ending_odometer || rental?.ending_odometer} km</p>
+                  )}
+                </div>
+              )}
             </div>
           </section>
           
@@ -195,113 +264,30 @@ const InvoiceTemplate = forwardRef(({ rental, logoUrl, stampUrl }, ref) => {
             </section>
           )}
 
-          {/* Financial Breakdown Section - Compact */}
-          <section className="mt-3 financial-section">
-            <h3 className="text-sm font-semibold text-gray-800 border-b pb-1 mb-1">Financial Details</h3>
-            
-            <div className="space-y-1 text-xs">
-              {/* Package Information - Compact */}
-              {rentalPackage?.package_name && (
-                <div className="bg-blue-50 border border-blue-200 rounded p-2">
-                  <p className="font-semibold text-blue-900 text-[10px] mb-0.5">📦 {rentalPackage.package_name}</p>
-                  <div className="text-[9px] text-blue-800">
-                    <span>• Included KM: {includedKms} km</span>
-                    <span className="ml-2">• Extra Rate: {extraKmRate.toFixed(2)} MAD/km</span>
-                  </div>
+          {/* Payment Status Section - NO AMOUNTS */}
+          <section className="mt-3">
+            <div className="p-2 bg-gray-50 border border-gray-200 rounded">
+              <h3 className="text-sm font-semibold mb-2">Payment Status</h3>
+              <div className="text-xs space-y-1">
+                <div className="flex justify-between">
+                  <span>Base Rental:</span>
+                  <span className={payment_status === 'paid' ? 'text-green-600 font-semibold' : 'text-red-600 font-semibold'}>
+                    {payment_status === 'paid' ? '✅ PAID' : '⚠️ UNPAID'}
+                  </span>
                 </div>
-              )}
-              
-              {/* Base Price */}
-              <div className="flex justify-between">
-                <span>Package Base Price:</span>
-                <span className="font-medium">{(unit_price || total_amount || 0).toFixed(2)} MAD</span>
-              </div>
-              
-              {/* Kilometer Overage - Compact */}
-              {finalOverageCharge > 0 && (
-                <div className="bg-yellow-50 border border-yellow-200 rounded p-2">
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="font-semibold text-yellow-800 text-[10px]">KM Overage</span>
-                    <span className="font-bold text-red-600 text-[10px]">+{finalOverageCharge.toFixed(2)} MAD</span>
-                  </div>
-                  
-                  <div className="text-[9px] text-gray-700 space-y-0.5">
-                    {start_odometer && ending_odometer && (
-                      <div className="flex justify-between">
-                        <span>Start: {start_odometer} km</span>
-                        <span>End: {ending_odometer} km</span>
+                {extensionsList && extensionsList.length > 0 && (
+                  <div className="mt-2">
+                    <span className="font-medium">Extensions:</span>
+                    {extensionsList.map((ext, idx) => (
+                      <div key={idx} className="flex justify-between ml-2">
+                        <span>Extension {idx + 1} ({ext.extension_hours}h):</span>
+                        <span className={ext.status === 'approved' ? 'text-green-600' : 'text-orange-600'}>
+                          {ext.status === 'approved' ? '✅ APPROVED' : '⚠️ PENDING'}
+                        </span>
                       </div>
-                    )}
-                    <div className="flex justify-between border-t border-yellow-200 pt-0.5">
-                      <span>Total: {totalKms.toFixed(2)} km</span>
-                      <span>Included: {includedKms} km</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Extra KM:</span>
-                      <span className="font-medium">{extraKms.toFixed(2)} km @ {extraKmRate.toFixed(2)} MAD/km</span>
-                    </div>
+                    ))}
                   </div>
-                </div>
-              )}
-              
-              {/* No Overage Message - Compact */}
-              {totalKms > 0 && finalOverageCharge === 0 && (
-                <div className="bg-green-50 border border-green-200 rounded p-1.5">
-                  <div className="text-[9px] text-green-800">
-                    <p className="font-semibold">✓ No KM Overage</p>
-                    <p>Total: {totalKms.toFixed(2)} km (within {includedKms} km)</p>
-                  </div>
-                </div>
-              )}
-              
-              {/* Extension Fees - Compact */}
-              {displayPrice > 0 && (
-                <div className="bg-purple-50 border border-purple-200 rounded p-2">
-                  <div className="flex justify-between items-center mb-1">
-                    <span className="font-semibold text-purple-800 text-[10px]">Ext. Info</span>
-                    <span className="font-bold text-purple-600 text-[10px]">+{displayPrice.toFixed(2)} MAD</span>
-                  </div>
-                  
-                  <div className="text-[9px] text-gray-700">
-                    <div className="flex justify-between mb-0.5">
-                      <span>Extensions: {approvedExtensions.length || (displayHours > 0 ? 1 : 0)}</span>
-                      <span>Hours: {displayHours}h</span>
-                    </div>
-                    
-                    {original_end_date && (
-                      <div className="border-t border-purple-200 pt-0.5">
-                        <div className="flex justify-between">
-                          <span>Original End:</span>
-                          <span className="text-[8px]">
-                            {new Date(original_end_date).toLocaleString('en-US', {
-                              month: 'short',
-                              day: 'numeric',
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            })}
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-              
-              {/* Grand Total */}
-              <div className="flex justify-between pt-1 border-t-2 border-gray-800 text-sm font-bold">
-                <span>Grand Total:</span>
-                <span>{((unit_price || total_amount || 0) + (finalOverageCharge || 0) + (displayPrice || 0)).toFixed(2)} MAD</span>
-              </div>
-              
-              {/* Deposit & Remaining */}
-              <div className="flex justify-between">
-                <span>Deposit Paid:</span>
-                <span>{(deposit_amount || 0).toFixed(2)} MAD</span>
-              </div>
-              
-              <div className="flex justify-between font-semibold">
-                <span>Remaining Due:</span>
-                <span>{(remaining_amount || 0).toFixed(2)} MAD</span>
+                )}
               </div>
             </div>
           </section>
@@ -436,16 +422,28 @@ const InvoiceTemplate = forwardRef(({ rental, logoUrl, stampUrl }, ref) => {
         </div>
       </div>
 
-      {/* Action Buttons */}
+      {/* Action Buttons - UPDATED */}
       <div className="mt-6 text-center no-print">
-        <button onClick={handleDownloadPdf} className="bg-blue-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors">
-          Download as PDF
-        </button>
+        <div className="flex justify-center gap-3">
+          <button 
+            onClick={handleDownloadPdf} 
+            className="bg-blue-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Download as PDF
+          </button>
+          <button 
+            onClick={() => window.print()} 
+            className="bg-green-600 text-white font-bold py-2 px-6 rounded-lg hover:bg-green-700 transition-colors"
+          >
+            <Printer className="inline-block w-4 h-4 mr-2" />
+            Print Contract
+          </button>
+        </div>
       </div>
     </div>
   );
 });
 
-InvoiceTemplate.displayName = "InvoiceTemplate";
+ContractTemplate.displayName = "ContractTemplate";
 
-export default InvoiceTemplate;
+export default ContractTemplate;

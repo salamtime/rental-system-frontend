@@ -35,18 +35,6 @@ export default function RentalDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
   
-  // 🔍 DEBUG: WhatsApp button click handler
-  const handleWhatsAppClick = () => {
-    console.log('✅ WhatsApp button clicked!', {
-      signature: !!rental?.signature_url,
-      paid: rental?.payment_status === 'paid',
-      time: Date.now()
-    });
-    
-    // Open modal immediately
-    setWhatsappModalOpen(true);
-  };
-
   const [rental, setRental] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -159,12 +147,6 @@ export default function RentalDetails() {
   // Video conversion state - for iOS .MOV/HEVC to mp4 conversion
   const [isConverting, setIsConverting] = useState(false);
   const [conversionProgress, setConversionProgress] = useState(0);
-  const [pdfCache, setPdfCache] = useState({
-    contractUrl: null,
-    receiptUrl: null,
-    contractGenerating: false,
-    receiptGenerating: false
-  });
   
 
 
@@ -176,7 +158,7 @@ export default function RentalDetails() {
   
   const handlePrintContract = useReactToPrint({
     content: () => contractRef.current,
-    documentTitle: `Rental-Contract-${rental?.rental_id}`,
+    documentTitle: `Rental-Contract-${rental?.id}`,
   });
 
   const handlePrintInvoice = () => {
@@ -371,7 +353,7 @@ export default function RentalDetails() {
       pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
       const pdfBlob = pdf.output('blob');
 
-      const filePath = `invoices/${rental.rental_id}_${Date.now()}.pdf`;
+      const filePath = `invoices/${rental.id}_${Date.now()}.pdf`;
       const { data: uploadData, error: uploadError } = await supabase.storage
         .from('invoices')
         .upload(filePath, pdfBlob, {
@@ -443,7 +425,7 @@ export default function RentalDetails() {
       }
 
       const pdfBlob = pdf.output('blob');
-      const fileName = `contract_${rental.rental_id}_${Date.now()}.pdf`;
+      const fileName = `contract_${rental.id}_${Date.now()}.pdf`;
       const filePath = `contracts/${fileName}`;
 
       const { data: uploadData, error: uploadError } = await supabase.storage
@@ -500,7 +482,7 @@ export default function RentalDetails() {
       }
 
       const pdfBlob = pdf.output('blob');
-      const fileName = `receipt_${rental.rental_id}_${Date.now()}.pdf`;
+      const fileName = `receipt_${rental.id}_${Date.now()}.pdf`;
       const filePath = `receipts/${fileName}`;
 
       const { data: uploadData, error: uploadError } = await supabase.storage
@@ -525,129 +507,7 @@ export default function RentalDetails() {
     }
   };
 
-  // PDF Caching Functions
-  const generateAndCacheContractPDF = async (rentalData = rental) => {
-    // ✅ OPTIMIZED: Check memory cache first
-    if (window.__pdfCache && window.__pdfCache[`contract_${rentalData.id}`]) {
-      console.log('📄 Using memory-cached contract PDF');
-      setPdfCache(prev => ({ ...prev, contractUrl: window.__pdfCache[`contract_${rentalData.id}`] }));
-      return window.__pdfCache[`contract_${rentalData.id}`];
-    }
-    
-    // ✅ FIX: Prevent duplicate generation
-    if (window.__pdfGenerating && window.__pdfGenerating.contract) {
-      console.log('📄 Contract PDF already generating, skipping duplicate');
-      return pdfCache.contractUrl || rentalData.contract_pdf_url;
-    }
-    
-    // Set generation lock
-    if (!window.__pdfGenerating) window.__pdfGenerating = {};
-    window.__pdfGenerating.contract = true;
-    
-    const timerId = `contract_pdf_${Date.now()}`;
-    console.time(timerId);
-    try {
-      setPdfCache(prev => ({ ...prev, contractGenerating: true }));
-      console.log('🔄 Generating contract PDF...');
-      
-      const contractUrl = await generateContractPDF();
-      
-      // Store in Supabase for persistence
-      await supabase
-        .from('app_4c3a7a6153_rentals')
-        .update({
-          contract_pdf_url: contractUrl,
-          contract_pdf_generated_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', rentalData.id);
-      
-      setPdfCache(prev => ({ 
-        ...prev, 
-        contractUrl, 
-        contractGenerating: false 
-      }));
-      setIsGeneratingContract(false);
-      
-      console.log('✅ Contract PDF cached:', contractUrl);
-      
-      return contractUrl;
-    } catch (error) {
-      console.error('❌ Failed to cache contract PDF:', error);
-      setPdfCache(prev => ({ ...prev, contractGenerating: false }));
-      setIsGeneratingContract(false);
-      return null;
-    } finally {
-      // Clear generation lock
-      if (window.__pdfGenerating) {
-        window.__pdfGenerating.contract = false;
-      }
-      console.timeEnd(timerId);
-    }
-  };
-
-  const generateAndCacheReceiptPDF = async () => {
-    // ✅ OPTIMIZED: Check memory cache first
-    if (window.__pdfCache && window.__pdfCache[`receipt_${rental.rental_id}`]) {
-      console.log('💰 Using memory-cached receipt PDF');
-      setPdfCache(prev => ({ ...prev, receiptUrl: window.__pdfCache[`receipt_${rental.rental_id}`] }));
-      return window.__pdfCache[`receipt_${rental.rental_id}`];
-    }
-    
-    // ✅ FIX: Prevent duplicate generation
-    if (window.__pdfGenerating && window.__pdfGenerating.receipt) {
-      console.log('💰 Receipt PDF already generating, skipping duplicate');
-      return pdfCache.receiptUrl || rental.receipt_pdf_url;
-    }
-    
-    // Set generation lock
-    if (!window.__pdfGenerating) window.__pdfGenerating = {};
-    window.__pdfGenerating.receipt = true;
-    
-    const timerId = `receipt_pdf_${Date.now()}`;
-    console.time(timerId);
-    try {
-      setPdfCache(prev => ({ ...prev, receiptGenerating: true }));
-      console.log('🔄 Generating receipt PDF...');
-      
-      const receiptUrl = await generateReceiptPDF();
-      
-      // Store in Supabase for persistence
-      await supabase
-        .from('app_4c3a7a6153_rentals')
-        .update({
-          receipt_pdf_url: receiptUrl,
-          receipt_pdf_generated_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', rental.id);
-      
-      setPdfCache(prev => ({ 
-        ...prev, 
-        receiptUrl, 
-        receiptGenerating: false 
-      }));
-      setIsGeneratingReceipt(false);
-      
-      console.log('✅ Receipt PDF cached:', receiptUrl);
-      
-      return receiptUrl;
-    } catch (error) {
-      console.error('❌ Failed to cache receipt PDF:', error);
-      setPdfCache(prev => ({ ...prev, receiptGenerating: false }));
-      setIsGeneratingReceipt(false);
-      return null;
-    } finally {
-      // Clear generation lock
-      if (window.__pdfGenerating) {
-        window.__pdfGenerating.receipt = false;
-      }
-      console.timeEnd(timerId);
-    }
-  };
-
-
-  // Send Contract Only via WhatsApp - OPTIMIZED
+  // Send Contract Only via WhatsApp
   const sendContractOnly = async () => {
     if (!rental?.customer_phone) {
       alert("Customer phone number is not available.");
@@ -656,11 +516,7 @@ export default function RentalDetails() {
 
     setIsSendingWhatsApp(true);
     try {
-      // Use cached URL if available, otherwise generate
-      let contractUrl = pdfCache.contractUrl || rental.contract_pdf_url;
-      if (!contractUrl) {
-        contractUrl = await generateContractPDF();
-      }
+      const contractUrl = await generateContractPDF();
       
       const message = `Hi ${rental.customer_name}!\n\nYour signed rental contract:\n${contractUrl}\n\nKeep for your records.`;
       const encodedMessage = encodeURIComponent(message);
@@ -675,7 +531,7 @@ export default function RentalDetails() {
     }
   };
 
-  // Send Receipt Only via WhatsApp - OPTIMIZED
+  // Send Receipt Only via WhatsApp
   const sendReceiptOnly = async () => {
     if (!rental?.customer_phone) {
       alert("Customer phone number is not available.");
@@ -684,11 +540,7 @@ export default function RentalDetails() {
 
     setIsSendingWhatsApp(true);
     try {
-      // Use cached URL if available, otherwise generate
-      let receiptUrl = pdfCache.receiptUrl || rental.receipt_pdf_url;
-      if (!receiptUrl) {
-        receiptUrl = await generateReceiptPDF();
-      }
+      const receiptUrl = await generateReceiptPDF();
       
       const totalAmount = calculateRentalBaseAmount() + (rental.overage_charge || 0) + (totalExtensionFees || 0);
       const status = rental.payment_status === 'paid' ? 'PAID IN FULL' : 'AMOUNT DUE';
@@ -706,36 +558,37 @@ export default function RentalDetails() {
     }
   };
 
+  // Send Both Documents via WhatsApp
+  const sendBothDocuments = async () => {
+    if (!rental?.customer_phone) {
+      alert("Customer phone number is not available.");
+      return;
+    }
+
+    setIsGeneratingBoth(true);
+    setIsSendingWhatsApp(true);
+    try {
+      const contractUrl = await generateContractPDF();
+      const receiptUrl = await generateReceiptPDF();
+      
+      const totalAmount = calculateRentalBaseAmount() + (rental.overage_charge || 0) + (totalExtensionFees || 0);
+      
+      const message = `Hi ${rental.customer_name}!\n\nYour rental documents:\n\n1. Contract: ${contractUrl}\n2. Receipt: ${receiptUrl}\n\nTotal: ${totalAmount.toFixed(2)} MAD\nThank you!`;
+      const encodedMessage = encodeURIComponent(message);
+      const whatsappUrl = `https://wa.me/${rental.customer_phone.replace(/[^0-9]/g, '')}?text=${encodedMessage}`;
+      
+      window.location.href = whatsappUrl;
+    } catch (error) {
+      console.error('Error sending both documents:', error);
+      alert('Failed to send documents. Please try again.');
+    } finally {
+      setIsGeneratingBoth(false);
+      setIsSendingWhatsApp(false);
+    }
+  };
 
 
   // Handle extension request creation
-  // ✅ OPTIMIZED: Generate PDFs on demand when user interacts with WhatsApp button
-  let pdfGenerationTimeout = null;
-  
-  const ensurePDFsReady = () => {
-    // Debounce: Only run once every 2 seconds
-    if (pdfGenerationTimeout) {
-      clearTimeout(pdfGenerationTimeout);
-    }
-    
-    pdfGenerationTimeout = setTimeout(() => {
-      if (rental?.signature_url && !pdfCache.contractUrl && !rental.contract_pdf_url && !pdfCache.contractGenerating) {
-        // Check if already generating
-        if (!window.__pdfGenerating || !window.__pdfGenerating.contract) {
-          console.log('🚀 Generating contract PDF on demand...');
-          generateAndCacheContractPDF();
-        }
-      }
-      
-      if (rental?.payment_status === 'paid' && !pdfCache.receiptUrl && !rental.receipt_pdf_url && !pdfCache.receiptGenerating) {
-        if (!window.__pdfGenerating || !window.__pdfGenerating.receipt) {
-          console.log('🚀 Generating receipt PDF on demand...');
-          generateAndCacheReceiptPDF();
-        }
-      }
-    }, 500); // Wait 500ms before starting generation (debounce)
-  };
-
   const handleExtensionCreated = async () => {
     console.log('🔄 Extension created, reloading data...');
     
@@ -768,7 +621,6 @@ export default function RentalDetails() {
   };
 
   // Handle extension rejection
-  // Handle extension rejection
   const handleRejectExtension = async (extensionId) => {
     if (!confirm('Cancel this extension request?')) return;
     
@@ -776,86 +628,79 @@ export default function RentalDetails() {
       await ExtensionPricingService.rejectExtension(extensionId, currentUser?.id, null);
       alert('✅ Extension request cancelled.');
       await loadExtensions();
-    } catch (err) {
-      console.error('❌ Error rejecting extension:', err);
-      alert(`Failed to cancel extension: ${err.message}`);
-    }
-  };
 
-  // ✅ RADICAL OPTIMIZATION: Use web view URLs instead of PDFs for instant WhatsApp
-  const getContractWebUrl = () => {
-    return `${window.location.origin}/contract/${rental.rental_id}`;
-  };
-
-  const getReceiptWebUrl = () => {
-    return `${window.location.origin}/receipt/${rental.rental_id}`;
-  };
-
-  const getContractUrl = async (preferWeb = true) => {
-    if (preferWeb) {
-      return getContractWebUrl();
-    }
-    // Fallback to PDF if web view not available
-    return pdfCache.contractUrl || rental.contract_pdf_url || await generateAndCacheContractPDF();
-  };
-
-  const getReceiptUrl = async (preferWeb = true) => {
-    if (preferWeb) {
-      return getReceiptWebUrl();
-    }
-    // Fallback to PDF if web view not available
-    return pdfCache.receiptUrl || rental.receipt_pdf_url || await generateAndCacheReceiptPDF();
-  };
-
-  // Handle WhatsApp selection and sending - INSTANT WEB VIEW VERSION
-const handleSendWhatsAppSelection = async (options) => {
+  const handleSendWhatsAppSelection = async (options) => {
     setIsSharing(true);
     setWhatsappModalOpen(false);
     
     try {
-      const lines = [
-        `Hi ${rental.customer_name}!`,
-        '',
-        `Rental Documents for ${rental.rental_id}`,
-        ''
-      ];
+      const itemsToSend = [];
       
-      // ONLY add documents if we have URLs
+      // Add contract if selected and available
       if (options.contract && rental.signature_url) {
-        const contractUrl = pdfCache.contractUrl || rental.contract_pdf_url;
-        if (contractUrl) {
-          const shortUrl = await shortenUrl(contractUrl);
-          lines.push(`Contract: ${shortUrl}`);
-        }
+        const contractPDF = await generateContractPDF();
+        if (contractPDF) itemsToSend.push('Contract');
       }
       
+      // Add receipt if selected and payment is completed
       if (options.receipt && rental.payment_status === 'paid') {
-        const receiptUrl = pdfCache.receiptUrl || rental.receipt_pdf_url;
-        if (receiptUrl) {
-          const shortUrl = await shortenUrl(receiptUrl);
-          lines.push(`Receipt: ${shortUrl}`);
-        }
+        const receiptPDF = await generateReceiptPDF();
+        if (receiptPDF) itemsToSend.push('Receipt');
       }
       
-      // If no lines were added (no documents), don't send WhatsApp
-      if (lines.length <= 4) {
-        alert('Documents are not ready yet. Please try again in a moment.');
-        setIsSharing(false);
+      // Add opening video if selected
+      if (options.openingVideo && openingMedia.length > 0) {
+        itemsToSend.push(`Opening Video (${openingMedia.length} file${openingMedia.length > 1 ? 's' : ''})`);
+      }
+      
+      // Add closing video if selected
+      if (options.closingVideo && closingMedia.length > 0) {
+        itemsToSend.push(`Closing Video (${closingMedia.length} file${closingMedia.length > 1 ? 's' : ''})`);
+      }
+      
+      if (itemsToSend.length === 0) {
+        alert('No items selected to send');
         return;
       }
       
-      lines.push('', 'Thank you!');
-      const message = lines.join('\n');
-      const phoneNumber = rental.customer_phone.replace(/[^0-9]/g, '');
-      const whatsappUrl = `https://wa.me/${phoneNumber}?text=${encodeURIComponent(message)}`;
+      // Build WhatsApp message
+      const formatRentalId = (rental) => {
+        return rental.id ? `#${rental.id.toString().padStart(4, '0')}` : 'N/A';
+      };
       
-      window.location.href = whatsappUrl;
+      let message = `Hello ${rental.customer_name},\n\nHere are your rental documents:\n\n`;
+      message += itemsToSend.map((item, idx) => `${idx + 1}. ${item}`).join('\n');
+      message += `\n\nRental ID: ${formatRentalId(rental)}`;
+      
+      // Add video URLs if selected
+      if (options.openingVideo && openingMedia.length > 0) {
+        message += `\n\nOpening Video: ${openingMedia[0].public_url || openingMedia[0].url}`;
+      }
+      if (options.closingVideo && closingMedia.length > 0) {
+        message += `\n\nClosing Video: ${closingMedia[0].public_url || closingMedia[0].url}`;
+      }
+      
+      const whatsappUrl = `https://wa.me/${rental.customer_phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(message)}`;
+      window.open(whatsappUrl, '_blank');
+      
+      // Reset options to defaults
+      setWhatsappOptions({
+        contract: true,
+        receipt: true,
+        openingVideo: false,
+        closingVideo: false
+      });
       
     } catch (error) {
       console.error('Error sending WhatsApp:', error);
-      alert('Failed to send WhatsApp message');
+      alert('Failed to prepare WhatsApp message');
     } finally {
       setIsSharing(false);
+    }
+  };
+    } catch (err) {
+      console.error('❌ Error rejecting extension:', err);
+      alert(`Failed to cancel extension: ${err.message}`);
     }
   };
 
@@ -920,22 +765,7 @@ const handleSendWhatsAppSelection = async (options) => {
 
 
     
-  
-
-  // 🔍 DEBUG: WhatsApp button click handler
-  const handleWhatsAppClick = () => {
-    console.log('✅ WhatsApp button clicked!', {
-      signature: !!rental?.signature_url,
-      paid: rental?.payment_status === 'paid',
-      time: Date.now()
-    });
-    
-    // Open modal immediately
-    setWhatsappModalOpen(true);
-  };
-
-  // 🔍 DEBUG: Check what's controlling the WhatsApp button
-  return (
+    return (
       <span className={`px-2 py-1 text-xs font-medium rounded-full ${colorClass}`}>
         {label}
       </span>
@@ -978,12 +808,7 @@ const handleSendWhatsAppSelection = async (options) => {
         remaining_amount: 0
       }));
 
-      // ✅ AUTO-GENERATE RECEIPT PDF IN BACKGROUND
-    setTimeout(() => {
-      generateAndCacheReceiptPDF();
-    }, 500);
-    
-    alert(`✅ Payment status updated to "Paid"!\n\nGrand Total: ${grandTotal.toFixed(2)} MAD\nDeposit Paid: ${grandTotal.toFixed(2)} MAD\nBalance Due: 0.00 MAD\n\nReceipt PDF will be generated in background.`);
+      alert(`✅ Payment status updated to "Paid"!\n\nGrand Total: ${grandTotal.toFixed(2)} MAD\nDeposit Paid: ${grandTotal.toFixed(2)} MAD\nBalance Due: 0.00 MAD`);
       
     } catch (err) {
       console.error('❌ Payment Update Error:', err);
@@ -1009,13 +834,7 @@ const handleSendWhatsAppSelection = async (options) => {
         .single();
       if (error) throw error;
       setRental(data);
-    
-    // ✅ AUTO-GENERATE CONTRACT PDF IN BACKGROUND
-    setTimeout(() => {
-      generateAndCacheContractPDF(data);
-    }, 500);
-    
-    alert('✅ Contract signed and signature saved! PDF will be generated in background.');
+      alert('✅ Contract signed and signature saved!');
     } catch (err) {
       console.error('❌ Error:', err);
       alert(`Failed to save signature. Error: ${err.message}`);
@@ -1848,47 +1667,12 @@ Please ensure camera permissions are granted.`);
     }
   }, [rental]);
 
-  // Load cached PDFs and auto-generate missing ones - OPTIMIZED
-  useEffect(() => {
-    if (rental) {
-      // Check for cached PDFs in rental data
-      if (rental.contract_pdf_url) {
-        console.log('📄 Found cached contract PDF:', rental.contract_pdf_url);
-        setPdfCache(prev => ({ ...prev, contractUrl: rental.contract_pdf_url }));
-      }
-      if (rental.receipt_pdf_url) {
-        console.log('💰 Found cached receipt PDF:', rental.receipt_pdf_url);
-        setPdfCache(prev => ({ ...prev, receiptUrl: rental.receipt_pdf_url }));
-      }
-      
-      // ✅ OPTIMIZED: Delay PDF generation for better UX
-      const generatePDFsIfNeeded = () => {
-        // Only generate if user has been on page for 3 seconds (page is interactive)
-        if (rental.signature_url && !rental.contract_pdf_url && !pdfCache.contractGenerating) {
-          console.log('📄 Contract PDF needed, generating in delayed background...');
-          setTimeout(() => generateAndCacheContractPDF(), 3000); // Delay 3 seconds
-        }
-        
-        if (rental.payment_status === 'paid' && !rental.receipt_pdf_url && !pdfCache.receiptGenerating) {
-          console.log('💰 Receipt PDF needed, generating in delayed background...');
-          setTimeout(() => generateAndCacheReceiptPDF(), 3500); // Delay 3.5 seconds
-        }
-      };
-      
-      // Wait 2 seconds before starting PDF generation
-      const timer = setTimeout(generatePDFsIfNeeded, 2000);
-      
-      return () => clearTimeout(timer);
-    }
-  }, [rental?.id, rental?.signature_url, rental?.payment_status, rental?.contract_pdf_url, rental?.receipt_pdf_url]);
-
   // Auto-close extension modal when closing video is uploaded
   useEffect(() => {
     if (closingMedia.length > 0 && extensionModalOpen) {
       setExtensionModalOpen(false);
     }
   }, [closingMedia, extensionModalOpen]);
-
 
 
 
@@ -1986,76 +1770,6 @@ Please ensure camera permissions are granted.`);
     return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
   };
 
-  // URL Shortening Function
-  const shortenUrl = async (url) => {
-    try {
-      const response = await fetch(`https://tinyurl.com/api-create.php?url=${encodeURIComponent(url)}`);
-      if (response.ok) return await response.text();
-      return url;
-    } catch (error) {
-      console.error('URL shortening failed:', error);
-      return url;
-    }
-  };
-
-  // WhatsApp URL opening helper - uses multiple methods
-  const openWhatsAppUrl = (url) => {
-    console.log('🔗 Opening WhatsApp URL with multiple methods:', url);
-    
-    // Method 1: Create and click a temporary link (most reliable)
-    const link = document.createElement('a');
-    link.href = url;
-    link.target = '_blank';
-    link.rel = 'noopener noreferrer';
-    link.style.cssText = 'position: fixed; left: -9999px; top: -9999px; width: 1px; height: 1px;';
-    
-    document.body.appendChild(link);
-    
-    try {
-      // Native click
-      link.click();
-      console.log('✅ Method 1: Native click attempted');
-    } catch (err) {
-      console.log('Native click failed, trying programmatic click');
-    }
-    
-    // Method 2: MouseEvent (for strict browsers)
-    setTimeout(() => {
-      try {
-        const event = new MouseEvent('click', {
-          view: window,
-          bubbles: true,
-          cancelable: true
-        });
-        link.dispatchEvent(event);
-        console.log('✅ Method 2: MouseEvent dispatched');
-      } catch (err) {
-        console.log('MouseEvent failed');
-      }
-    }, 10);
-    
-    // Method 3: window.open as fallback
-    setTimeout(() => {
-      try {
-        window.open(url, '_blank', 'noopener,noreferrer');
-        console.log('✅ Method 3: window.open attempted');
-      } catch (err) {
-        console.log('window.open failed, showing manual option');
-        // Show URL for manual copy
-        alert(`WhatsApp blocked by browser. Please copy this link manually:\n\n${url}`);
-      }
-    }, 50);
-    
-    // Cleanup
-    setTimeout(() => {
-      if (link.parentNode) {
-        document.body.removeChild(link);
-      }
-    }, 1000);
-  };
-
-
-
   // ✅ UPDATED: Enhanced saveMedia with improved retry logic and non-blocking thumbnail generation
     /**
    * ENHANCED SAVE MEDIA - First-Try Upload Success with Progress
@@ -2085,8 +1799,8 @@ Please ensure camera permissions are granted.`);
       // Generate unique filename with timestamp
       const timestamp = Date.now();
       const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-      const fileName = `${type}_${rental.rental_id}_${timestamp}_${sanitizedName}`;
-      const filePath = `rentals/${rental.rental_id}/${type}/${fileName}`;
+      const fileName = `${type}_${rental.id}_${timestamp}_${sanitizedName}`;
+      const filePath = `rentals/${rental.id}/${type}/${fileName}`;
 
       console.log(`📤 Upload path: ${filePath}`);
 
@@ -2108,7 +1822,7 @@ Please ensure camera permissions are granted.`);
         const { generateThumbnailSafe } = await import('../../utils/uploadWithRetry');
         thumbnailUrl = await generateThumbnailSafe(
           file.url,
-          `rentals/${rental.rental_id}/${type}/thumb_${fileName.replace(/\.[^.]+$/, '.jpg')}`
+          `rentals/${rental.id}/${type}/thumb_${fileName.replace(/\.[^.]+$/, '.jpg')}`
         );
         console.log('✅ Thumbnail generated:', thumbnailUrl);
       } catch (thumbError) {
@@ -2598,10 +2312,9 @@ Please ensure camera permissions are granted.`);
   if (error) return <div className="flex items-center justify-center min-h-screen"><p>{error}</p></div>;
 
   // Button state logic
-  // ✅ INSTANT: Button enabled immediately without waiting for PDF generation
-  const canSendContract = !!rental?.signature_url;
-  const canSendReceipt = rental?.payment_status === 'paid';
-  const canSendBoth = canSendContract && canSendReceipt;
+  const canSendContract = rental?.signature_url && !isGeneratingContract && !isSendingWhatsApp;
+  const canSendReceipt = rental?.payment_status === 'paid' && !isGeneratingReceipt && !isSendingWhatsApp;
+  const canSendBoth = canSendContract && canSendReceipt && !isGeneratingBoth && !isSendingWhatsApp;
 
   if (!rental) return <div className="flex items-center justify-center min-h-screen"><p>Rental not found</p></div>;
 
@@ -2682,18 +2395,24 @@ Please ensure camera permissions are granted.`);
 </Button>
               <Button
                 onClick={() => setWhatsappModalOpen(true)}
-                onMouseEnter={ensurePDFsReady}
-                disabled={!rental?.signature_url || rental?.payment_status !== 'paid'}
+                disabled={!canSendBoth}
                 className="bg-green-600 text-white hover:bg-green-700 flex items-center gap-2"
-                title={!rental?.signature_url ? "Contract not signed yet" : 
-                       rental?.payment_status !== 'paid' ? "Payment not completed" : 
-                       "Send documents via WhatsApp"}
+                title={!canSendBoth ? "Need signed contract and completed payment" : "Send both documents via WhatsApp"}
               >
                 <FaWhatsapp size={18} />
                 WhatsApp
               </Button>
                           </>
             )}
+              <Button 
+                onClick={() => setWhatsappModalOpen(true)} 
+                disabled={isSharing || !canSendWhatsApp} 
+                className="bg-green-600 text-white hover:bg-green-700 flex items-center gap-2"
+                title={!canSendWhatsApp ? "Please sign the contract before sending WhatsApp" : "Choose what to send via WhatsApp"}
+              >
+                  <FaWhatsapp size={18} />
+                  WhatsApp
+              </Button>
         </div>
       </div>
 
@@ -2702,7 +2421,7 @@ Please ensure camera permissions are granted.`);
           <CardTitle className="flex flex-col sm:flex-row sm:justify-between sm:items-center text-lg sm:text-xl">
             <div className="flex flex-col mb-2 sm:mb-0">
               <span>{rental.vehicle?.name} - {rental.vehicle?.model}</span>
-              <span className="text-sm font-normal text-gray-500 mt-1">Rental ID: {rental.rental_id}</span>
+              <span className="text-sm font-normal text-gray-500 mt-1">Rental ID: {rental.id}</span>
             </div>
             <Badge className={`${getStatusColor(rental.rental_status)} self-start sm:self-center`}>{rental.rental_status?.toUpperCase()}</Badge>
           </CardTitle>
@@ -4442,8 +4161,46 @@ Please ensure camera permissions are granted.`);
             <Button
               className="bg-green-600 hover:bg-green-700 text-white flex items-center gap-2"
               onClick={async () => {
-                // Use the updated handleSendWhatsAppSelection function
-                await handleSendWhatsAppSelection(whatsappOptions);
+                setIsSharing(true);
+                try {
+                  const contractUrl = whatsappOptions.contract ? await generateContractPDF() : null;
+                  const receiptUrl = whatsappOptions.receipt ? await generateReceiptPDF() : null;
+                  
+                  const videoUrls = [];
+                  if (whatsappOptions.openingVideo && openingMedia.length > 0) {
+                    const latestOpening = openingMedia[0];
+                    if (latestOpening.public_url) videoUrls.push(`Opening Video: ${latestOpening.public_url}`);
+                  }
+                  if (whatsappOptions.closingVideo && closingMedia.length > 0) {
+                    const latestClosing = closingMedia[0];
+                    if (latestClosing.public_url) videoUrls.push(`Closing Video: ${latestClosing.public_url}`);
+                  }
+                  
+                  let message = `Hi ${rental.customer_name}!\n\nYour rental documents:\n`;
+                  if (contractUrl) message += `Contract: ${contractUrl}\n`;
+                  if (receiptUrl) message += `Receipt: ${receiptUrl}\n`;
+                  if (videoUrls.length > 0) {
+                    message += `\nVideos:\n${videoUrls.join('\n')}`;
+                  }
+                  message += `\n\nThank you!`;
+                  
+                  const encodedMessage = encodeURIComponent(message);
+                  const whatsappUrl = `https://wa.me/${rental.customer_phone.replace(/[^0-9]/g, '')}?text=${encodedMessage}`;
+                  window.location.href = whatsappUrl;
+                  
+                  setWhatsappOptions({
+                    contract: true,
+                    receipt: true,
+                    openingVideo: false,
+                    closingVideo: false
+                  });
+                  setWhatsappModalOpen(false);
+                } catch (error) {
+                  console.error('Error sending WhatsApp:', error);
+                  alert(`Failed to share via WhatsApp. Error: ${error.message}`);
+                } finally {
+                  setIsSharing(false);
+                }
               }}
             >
               <FaWhatsapp size={18} />
@@ -4568,13 +4325,10 @@ Breakdown:
           </Button>
           <Button
             onClick={() => setWhatsappModalOpen(true)}
-            onTouchStart={ensurePDFsReady}
-            disabled={!rental?.signature_url || rental?.payment_status !== 'paid'}
+            disabled={!canSendBoth}
             className="text-xs py-2 h-auto bg-green-600 text-white hover:bg-green-700"
             size="sm"
-            title={!rental?.signature_url ? "Contract not signed yet" : 
-                   rental?.payment_status !== 'paid' ? "Payment not completed" : 
-                   "Send documents via WhatsApp"}
+            title="Send both documents via WhatsApp"
           >
             <FaWhatsapp size={12} className="mr-1" />
             WhatsApp
@@ -4611,7 +4365,6 @@ Breakdown:
                 const isBalanceCoveredByDeposit = balanceDue > 0 && rental.deposit_returned_at && Math.abs((damageDeposit - balanceDue) - depositToReturn) < 0.01;
                 
                 if (isBalanceCoveredByDeposit) {
-
                   return (
                     <span className="text-sm text-green-600 flex items-center justify-center gap-1 w-full">
                       <CheckCircle className="w-4 h-4" />

@@ -531,7 +531,7 @@ const CustomerManagementDashboard = () => {
                             <div>
                               <p className="font-medium text-gray-900">{r.vehicle?.name || 'Unknown Vehicle'}</p>
                               <Link to={`/admin/rentals/${r.id}`} className="text-sm text-blue-600 hover:underline">
-                                Rental ID: {r.id}
+                                {r.rental_id ? `Rental #${r.rental_id}` : `Rental: ${r.id?.slice(0, 8)}...`}
                               </Link>
                             </div>
                             <span className={`px-2 py-1 text-xs font-semibold rounded-full ${

@@ -788,10 +788,17 @@ const Rentals = () => {
                       const isImmutable = rental.rental_status === 'active' || rental.rental_status === 'completed';
                       
                       return (
-                        <tr key={rental.id} className="hover:bg-gray-50">
+                        <tr 
+                          key={rental.id} 
+                          className="hover:bg-gray-50 cursor-pointer"
+                          onClick={() => handleViewRental(rental)}
+                        >
                           <td className="px-6 py-4 whitespace-nowrap">
                             <button
-                              onClick={() => handleViewRental(rental)}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleViewRental(rental);
+                              }}
                               className="text-blue-600 hover:text-blue-900 hover:underline font-mono font-medium"
                               title="Click to view rental details"
                             >
@@ -808,7 +815,10 @@ const Rentals = () => {
                               </div>
                               <div className="mt-1">
                                 <button
-                                  onClick={() => handleViewCustomerDetails(rental)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleViewCustomerDetails(rental);
+                                  }}
                                   className="text-xs text-blue-600 hover:text-blue-900 hover:underline font-medium"
                                   title="View customer details"
                                 >
@@ -861,14 +871,18 @@ const Rentals = () => {
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                             <div className="flex space-x-2">
                               <button
-                                onClick={() => handleViewRental(rental)}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleViewRental(rental);
+                                }}
                                 className="text-indigo-600 hover:text-indigo-900 font-medium"
                                 title="View enhanced rental details"
                               >
                                 Details
                               </button>
                               <button
-                                onClick={() => {
+                                onClick={(e) => {
+                                  e.stopPropagation();
                                   setEditingRental(rental);
                                   setShowStepperForm(true);
                                 }}
@@ -881,7 +895,10 @@ const Rentals = () => {
                               
                               {rental.rental_status === 'scheduled' && (
                                 <button
-                                  onClick={() => handleStartContract(rental)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleStartContract(rental);
+                                  }}
                                   disabled={!canStartContract}
                                   className={`${
                                     canStartContract
@@ -900,7 +917,10 @@ const Rentals = () => {
                               
                               {rental.rental_status === 'active' && (
                                 <button
-                                  onClick={() => handleCloseContract(rental)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCloseContract(rental);
+                                  }}
                                   className="text-orange-600 hover:text-orange-900"
                                   title="Complete rental with closing video (same as Complete Now)"
                                 >
@@ -910,7 +930,10 @@ const Rentals = () => {
                               
                               {canDelete() && (
                                 <button
-                                  onClick={() => handleDeleteRental(rental.id)}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteRental(rental.id);
+                                  }}
                                   className={`text-red-600 hover:text-red-900 ${isImmutable ? 'text-gray-400 cursor-not-allowed opacity-50' : ''}`}
                                   title={isImmutable ? "Cannot delete active or completed rentals" : "Delete rental"}
                                   disabled={isImmutable}
@@ -951,144 +974,169 @@ const Rentals = () => {
                   const isImmutable = rental.rental_status === 'active' || rental.rental_status === 'completed';
                   
                   return (
-                    <div key={rental.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow bg-white">
-                      {/* Header with Rental ID and Status */}
-                      <div className="flex justify-between items-start mb-3 pb-3 border-b border-gray-100">
-                        <button
-                          onClick={() => handleViewRental(rental)}
-                          className="text-blue-600 hover:text-blue-900 hover:underline font-mono font-bold text-sm"
-                          title="Click to view rental details"
-                        >
-                          {formatRentalId(rental)}
-                        </button>
-                        {getStatusBadge(rental.rental_status)}
-                      </div>
-
-                      {/* Customer Info */}
-                      <div className="mb-3">
-                        <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Customer</div>
-                        <div className="text-sm font-medium text-gray-900">{rental.customer_name}</div>
-                        <button
-                          onClick={() => handleViewCustomerDetails(rental)}
-                          className="text-xs text-blue-600 hover:text-blue-900 hover:underline mt-1"
-                        >
-                          View Details
-                        </button>
-                      </div>
-
-                      {/* Vehicle Info */}
-                      <div className="mb-3">
-                        <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Vehicle</div>
-                        <div className="text-sm font-medium text-gray-900">{formatVehicleName(rental.vehicle)}</div>
-                      </div>
-
-                      {/* Plate Number */}
-                      <div className="mb-3">
-                        <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Plate Number</div>
-                        <div className="text-sm font-mono font-medium text-gray-900 bg-gray-100 px-2 py-1 rounded inline-block">
-                          {formatPlateNumber(rental.vehicle?.plate_number)}
+                    <div 
+                      key={rental.id} 
+                      className="cursor-pointer"
+                      onClick={() => handleViewRental(rental)}
+                    >
+                      <div className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow bg-white hover:border-blue-300">
+                        {/* Header with Rental ID and Status */}
+                        <div className="flex justify-between items-start mb-3 pb-3 border-b border-gray-100">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleViewRental(rental);
+                            }}
+                            className="text-blue-600 hover:text-blue-900 hover:underline font-mono font-bold text-sm"
+                            title="Click to view rental details"
+                          >
+                            {formatRentalId(rental)}
+                          </button>
+                          {getStatusBadge(rental.rental_status)}
                         </div>
-                      </div>
 
-                      {/* Rental Period */}
-                      <div className="mb-3">
-                        <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Rental Period</div>
-                        <div className="text-sm text-gray-900">
-                          {formatDate(rental.rental_start_date)} - {formatDate(rental.rental_end_date)}
+                        {/* Customer Info */}
+                        <div className="mb-3">
+                          <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Customer</div>
+                          <div className="text-sm font-medium text-gray-900">{rental.customer_name}</div>
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleViewCustomerDetails(rental);
+                            }}
+                            className="text-xs text-blue-600 hover:text-blue-900 hover:underline mt-1"
+                          >
+                            View Details
+                          </button>
                         </div>
-                      </div>
 
-                      {/* Payment Status */}
-                      <div className="mb-3">
-                        <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Payment Status</div>
-                        {getPaymentStatusBadge(rental.payment_status)}
-                      </div>
+                        {/* Vehicle Info */}
+                        <div className="mb-3">
+                          <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Vehicle</div>
+                          <div className="text-sm font-medium text-gray-900">{formatVehicleName(rental.vehicle)}</div>
+                        </div>
 
-                      {/* Amount */}
-                      <div className="mb-4">
-                        <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Amount</div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-bold text-gray-900">
-                            {rental.total_amount ? `${rental.total_amount} MAD` : 'N/A'}
-                          </span>
-                          {rental.approval_status === 'pending' && rental.pending_total_request && (
-                            <span 
-                              className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full bg-yellow-50 text-yellow-700 border border-yellow-300"
-                              title={`Pending approval for ${rental.pending_total_request} MAD`}
-                            >
-                              <Clock className="w-3 h-3" />
-                              Pending
+                        {/* Plate Number */}
+                        <div className="mb-3">
+                          <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Plate Number</div>
+                          <div className="text-sm font-mono font-medium text-gray-900 bg-gray-100 px-2 py-1 rounded inline-block">
+                            {formatPlateNumber(rental.vehicle?.plate_number)}
+                          </div>
+                        </div>
+
+                        {/* Rental Period */}
+                        <div className="mb-3">
+                          <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Rental Period</div>
+                          <div className="text-sm text-gray-900">
+                            {formatDate(rental.rental_start_date)} - {formatDate(rental.rental_end_date)}
+                          </div>
+                        </div>
+
+                        {/* Payment Status */}
+                        <div className="mb-3">
+                          <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Payment Status</div>
+                          {getPaymentStatusBadge(rental.payment_status)}
+                        </div>
+
+                        {/* Amount */}
+                        <div className="mb-4">
+                          <div className="text-xs text-gray-500 uppercase font-semibold mb-1">Amount</div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-bold text-gray-900">
+                              {rental.total_amount ? `${rental.total_amount} MAD` : 'N/A'}
                             </span>
-                          )}
+                            {rental.approval_status === 'pending' && rental.pending_total_request && (
+                              <span 
+                                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full bg-yellow-50 text-yellow-700 border border-yellow-300"
+                                title={`Pending approval for ${rental.pending_total_request} MAD`}
+                              >
+                                <Clock className="w-3 h-3" />
+                                Pending
+                              </span>
+                            )}
+                          </div>
                         </div>
-                      </div>
 
-                      {/* Actions */}
-                      <div className="flex flex-wrap gap-2 pt-3 border-t border-gray-100">
-                        <button
-                          onClick={() => handleViewRental(rental)}
-                          className="px-3 py-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 rounded transition-colors"
-                        >
-                          Details
-                        </button>
-                        <button
-                          onClick={() => {
-                            setEditingRental(rental);
-                            setShowStepperForm(true);
-                          }}
-                          className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-                            isImmutable 
-                              ? 'text-gray-400 cursor-not-allowed' 
-                              : 'text-blue-600 hover:text-blue-900 hover:bg-blue-50'
-                          }`}
-                          disabled={isImmutable}
-                          title={isImmutable ? "Cannot edit active or completed rentals" : "Edit rental"}
-                        >
-                          Edit
-                        </button>
-                        
-                        {rental.rental_status === 'scheduled' && (
+                        {/* Actions */}
+                        <div className="flex flex-wrap gap-2 pt-3 border-t border-gray-100">
                           <button
-                            onClick={() => handleStartContract(rental)}
-                            disabled={!canStartContract}
-                            className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
-                              canStartContract
-                                ? 'text-green-600 hover:text-green-900 hover:bg-green-50'
-                                : 'text-gray-400 cursor-not-allowed'
-                            }`}
-                            title={
-                              canStartContract
-                                ? 'Start contract with video check-in'
-                                : 'Payment must be "Paid" to start'
-                            }
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleViewRental(rental);
+                            }}
+                            className="px-3 py-1.5 text-xs font-medium text-indigo-600 hover:text-indigo-900 hover:bg-indigo-50 rounded transition-colors"
                           >
-                            Start
+                            Details
                           </button>
-                        )}
-                        
-                        {rental.rental_status === 'active' && (
                           <button
-                            onClick={() => handleCloseContract(rental)}
-                            className="px-3 py-1.5 text-xs font-medium text-orange-600 hover:text-orange-900 hover:bg-orange-50 rounded transition-colors"
-                          >
-                            Close
-                          </button>
-                        )}
-                        
-                        {canDelete() && (
-                          <button
-                            onClick={() => handleDeleteRental(rental.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingRental(rental);
+                              setShowStepperForm(true);
+                            }}
                             className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
                               isImmutable 
                                 ? 'text-gray-400 cursor-not-allowed' 
-                                : 'text-red-600 hover:text-red-900 hover:bg-red-50'
+                                : 'text-blue-600 hover:text-blue-900 hover:bg-blue-50'
                             }`}
                             disabled={isImmutable}
-                            title={isImmutable ? "Cannot delete active or completed rentals" : "Delete rental"}
+                            title={isImmutable ? "Cannot edit active or completed rentals" : "Edit rental"}
                           >
-                            Delete
+                            Edit
                           </button>
-                        )}
+                          
+                          {rental.rental_status === 'scheduled' && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleStartContract(rental);
+                              }}
+                              disabled={!canStartContract}
+                              className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                                canStartContract
+                                  ? 'text-green-600 hover:text-green-900 hover:bg-green-50'
+                                  : 'text-gray-400 cursor-not-allowed'
+                              }`}
+                              title={
+                                canStartContract
+                                  ? 'Start contract with video check-in'
+                                  : 'Payment must be "Paid" to start'
+                              }
+                            >
+                              Start
+                            </button>
+                          )}
+                          
+                          {rental.rental_status === 'active' && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleCloseContract(rental);
+                              }}
+                              className="px-3 py-1.5 text-xs font-medium text-orange-600 hover:text-orange-900 hover:bg-orange-50 rounded transition-colors"
+                            >
+                              Close
+                            </button>
+                          )}
+                          
+                          {canDelete() && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteRental(rental.id);
+                              }}
+                              className={`px-3 py-1.5 text-xs font-medium rounded transition-colors ${
+                                isImmutable 
+                                  ? 'text-gray-400 cursor-not-allowed' 
+                                  : 'text-red-600 hover:text-red-900 hover:bg-red-50'
+                              }`}
+                              disabled={isImmutable}
+                              title={isImmutable ? "Cannot delete active or completed rentals" : "Delete rental"}
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );
@@ -1121,148 +1169,170 @@ const Rentals = () => {
                   return (
                     <div 
                       key={rental.id} 
-                      className="border border-gray-200 rounded-lg p-3 hover:shadow-lg transition-all bg-gradient-to-br from-white to-gray-50 hover:border-blue-300"
+                      className="cursor-pointer"
+                      onClick={() => handleViewRental(rental)}
                     >
-                      {/* Compact Header */}
-                      <div className="flex justify-between items-center mb-2 pb-2 border-b border-gray-200">
-                        <button
-                          onClick={() => handleViewRental(rental)}
-                          className="text-blue-600 hover:text-blue-800 font-mono font-bold text-xs truncate max-w-[60%]"
-                          title={formatRentalId(rental)}
-                        >
-                          {formatRentalId(rental)}
-                        </button>
-                        <div className="flex items-center gap-1">
-                          {getStatusBadge(rental.rental_status)}
-                        </div>
-                      </div>
-
-                      {/* Compact Info Grid */}
-                      <div className="space-y-2 text-xs">
-                        {/* Customer */}
-                        <div className="flex items-start gap-2">
-                          <span className="text-gray-500 font-semibold min-w-[50px]">👤</span>
-                          <div className="flex-1 min-w-0">
-                            <div className="font-medium text-gray-900 truncate">{rental.customer_name}</div>
-                            <button
-                              onClick={() => handleViewCustomerDetails(rental)}
-                              className="text-blue-600 hover:text-blue-800 text-[10px] underline"
-                            >
-                              Details
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Vehicle & Plate */}
-                        <div className="flex items-start gap-2">
-                          <span className="text-gray-500 font-semibold min-w-[50px]">🚗</span>
-                          <div className="flex-1 min-w-0">
-                            <div className="font-medium text-gray-900 truncate">{formatVehicleName(rental.vehicle)}</div>
-                            <div className="font-mono text-[10px] bg-gray-100 px-1.5 py-0.5 rounded inline-block mt-0.5">
-                              {formatPlateNumber(rental.vehicle?.plate_number)}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Dates */}
-                        <div className="flex items-start gap-2">
-                          <span className="text-gray-500 font-semibold min-w-[50px]">📅</span>
-                          <div className="flex-1 min-w-0 text-[10px] text-gray-700">
-                            <div>{formatDate(rental.rental_start_date)}</div>
-                            <div className="text-gray-500">to {formatDate(rental.rental_end_date)}</div>
-                          </div>
-                        </div>
-
-                        {/* Time Remaining for Active Rentals */}
-                        {(() => {
-                          const timeRemaining = calculateTimeRemaining(rental);
-                          return timeRemaining ? (
-                            <div className={`flex items-center justify-center gap-1.5 ${timeRemaining.bgColor} px-2 py-1.5 rounded-md border ${timeRemaining.color.replace('text-', 'border-')}`}>
-                              <Clock className={`w-3.5 h-3.5 ${timeRemaining.color}`} />
-                              <span className={`text-xs font-extrabold ${timeRemaining.color} tracking-tight`}>
-                                {timeRemaining.text}
-                              </span>
-                            </div>
-                          ) : null;
-                        })()}
-
-                        {/* Payment Info */}
-                        <div className="flex items-center justify-between gap-2 pt-2 border-t border-gray-100">
+                      <div className="border border-gray-200 rounded-lg p-3 hover:shadow-lg transition-all bg-gradient-to-br from-white to-gray-50 hover:border-blue-300">
+                        {/* Compact Header */}
+                        <div className="flex justify-between items-center mb-2 pb-2 border-b border-gray-200">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleViewRental(rental);
+                            }}
+                            className="text-blue-600 hover:text-blue-800 font-mono font-bold text-xs truncate max-w-[60%]"
+                            title={formatRentalId(rental)}
+                          >
+                            {formatRentalId(rental)}
+                          </button>
                           <div className="flex items-center gap-1">
-                            {getPaymentStatusBadge(rental.payment_status)}
-                          </div>
-                          <div className="font-bold text-gray-900 text-xs whitespace-nowrap">
-                            {rental.total_amount ? `${rental.total_amount} MAD` : 'N/A'}
+                            {getStatusBadge(rental.rental_status)}
                           </div>
                         </div>
 
-                        {rental.approval_status === 'pending' && rental.pending_total_request && (
-                          <div className="flex items-center gap-1 text-[10px] text-yellow-700 bg-yellow-50 px-2 py-1 rounded">
-                            <Clock className="w-3 h-3" />
-                            <span>Pending: {rental.pending_total_request} MAD</span>
+                        {/* Compact Info Grid */}
+                        <div className="space-y-2 text-xs">
+                          {/* Customer */}
+                          <div className="flex items-start gap-2">
+                            <span className="text-gray-500 font-semibold min-w-[50px]">👤</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-gray-900 truncate">{rental.customer_name}</div>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleViewCustomerDetails(rental);
+                                }}
+                                className="text-blue-600 hover:text-blue-800 text-[10px] underline"
+                              >
+                                Details
+                              </button>
+                            </div>
                           </div>
-                        )}
-                      </div>
 
-                      {/* Compact Actions */}
-                      <div className="flex flex-wrap gap-1 mt-3 pt-2 border-t border-gray-100">
-                        <button
-                          onClick={() => handleViewRental(rental)}
-                          className="flex-1 px-2 py-1 text-[10px] font-medium text-indigo-600 hover:text-white hover:bg-indigo-600 border border-indigo-600 rounded transition-colors"
-                        >
-                          View
-                        </button>
-                        <button
-                          onClick={() => {
-                            setEditingRental(rental);
-                            setShowStepperForm(true);
-                          }}
-                          className={`flex-1 px-2 py-1 text-[10px] font-medium border rounded transition-colors ${
-                            isImmutable 
-                              ? 'text-gray-400 border-gray-300 cursor-not-allowed' 
-                              : 'text-blue-600 hover:text-white hover:bg-blue-600 border-blue-600'
-                          }`}
-                          disabled={isImmutable}
-                        >
-                          Edit
-                        </button>
-                        
-                        {rental.rental_status === 'scheduled' && (
+                          {/* Vehicle & Plate */}
+                          <div className="flex items-start gap-2">
+                            <span className="text-gray-500 font-semibold min-w-[50px]">🚗</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="font-medium text-gray-900 truncate">{formatVehicleName(rental.vehicle)}</div>
+                              <div className="font-mono text-[10px] bg-gray-100 px-1.5 py-0.5 rounded inline-block mt-0.5">
+                                {formatPlateNumber(rental.vehicle?.plate_number)}
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Dates */}
+                          <div className="flex items-start gap-2">
+                            <span className="text-gray-500 font-semibold min-w-[50px]">📅</span>
+                            <div className="flex-1 min-w-0 text-[10px] text-gray-700">
+                              <div>{formatDate(rental.rental_start_date)}</div>
+                              <div className="text-gray-500">to {formatDate(rental.rental_end_date)}</div>
+                            </div>
+                          </div>
+
+                          {/* Time Remaining for Active Rentals */}
+                          {(() => {
+                            const timeRemaining = calculateTimeRemaining(rental);
+                            return timeRemaining ? (
+                              <div className={`flex items-center justify-center gap-1.5 ${timeRemaining.bgColor} px-2 py-1.5 rounded-md border ${timeRemaining.color.replace('text-', 'border-')}`}>
+                                <Clock className={`w-3.5 h-3.5 ${timeRemaining.color}`} />
+                                <span className={`text-xs font-extrabold ${timeRemaining.color} tracking-tight`}>
+                                  {timeRemaining.text}
+                                </span>
+                              </div>
+                            ) : null;
+                          })()}
+
+                          {/* Payment Info */}
+                          <div className="flex items-center justify-between gap-2 pt-2 border-t border-gray-100">
+                            <div className="flex items-center gap-1">
+                              {getPaymentStatusBadge(rental.payment_status)}
+                            </div>
+                            <div className="font-bold text-gray-900 text-xs whitespace-nowrap">
+                              {rental.total_amount ? `${rental.total_amount} MAD` : 'N/A'}
+                            </div>
+                          </div>
+
+                          {rental.approval_status === 'pending' && rental.pending_total_request && (
+                            <div className="flex items-center gap-1 text-[10px] text-yellow-700 bg-yellow-50 px-2 py-1 rounded">
+                              <Clock className="w-3 h-3" />
+                              <span>Pending: {rental.pending_total_request} MAD</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Compact Actions */}
+                        <div className="flex flex-wrap gap-1 mt-3 pt-2 border-t border-gray-100">
                           <button
-                            onClick={() => handleStartContract(rental)}
-                            disabled={!canStartContract}
-                            className={`flex-1 px-2 py-1 text-[10px] font-medium border rounded transition-colors ${
-                              canStartContract
-                                ? 'text-green-600 hover:text-white hover:bg-green-600 border-green-600'
-                                : 'text-gray-400 border-gray-300 cursor-not-allowed'
-                            }`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleViewRental(rental);
+                            }}
+                            className="flex-1 px-2 py-1 text-[10px] font-medium text-indigo-600 hover:text-white hover:bg-indigo-600 border border-indigo-600 rounded transition-colors"
                           >
-                            Start
+                            View
                           </button>
-                        )}
-                        
-                        {rental.rental_status === 'active' && (
                           <button
-                            onClick={() => handleCloseContract(rental)}
-                            className="flex-1 px-2 py-1 text-[10px] font-medium text-orange-600 hover:text-white hover:bg-orange-600 border border-orange-600 rounded transition-colors"
-                          >
-                            Close
-                          </button>
-                        )}
-                        
-                        {canDelete() && (
-                          <button
-                            onClick={() => handleDeleteRental(rental.id)}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setEditingRental(rental);
+                              setShowStepperForm(true);
+                            }}
                             className={`flex-1 px-2 py-1 text-[10px] font-medium border rounded transition-colors ${
                               isImmutable 
                                 ? 'text-gray-400 border-gray-300 cursor-not-allowed' 
-                                : 'text-red-600 hover:text-white hover:bg-red-600 border-red-600'
+                                : 'text-blue-600 hover:text-white hover:bg-blue-600 border-blue-600'
                             }`}
                             disabled={isImmutable}
                           >
-                            Delete
+                            Edit
                           </button>
-                        )}
+                          
+                          {rental.rental_status === 'scheduled' && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleStartContract(rental);
+                              }}
+                              disabled={!canStartContract}
+                              className={`flex-1 px-2 py-1 text-[10px] font-medium border rounded transition-colors ${
+                                canStartContract
+                                  ? 'text-green-600 hover:text-white hover:bg-green-600 border-green-600'
+                                  : 'text-gray-400 border-gray-300 cursor-not-allowed'
+                              }`}
+                            >
+                              Start
+                            </button>
+                          )}
+                          
+                          {rental.rental_status === 'active' && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleCloseContract(rental);
+                              }}
+                              className="flex-1 px-2 py-1 text-[10px] font-medium text-orange-600 hover:text-white hover:bg-orange-600 border border-orange-600 rounded transition-colors"
+                            >
+                              Close
+                            </button>
+                          )}
+                          
+                          {canDelete() && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteRental(rental.id);
+                              }}
+                              className={`flex-1 px-2 py-1 text-[10px] font-medium border rounded transition-colors ${
+                                isImmutable 
+                                  ? 'text-gray-400 border-gray-300 cursor-not-allowed' 
+                                  : 'text-red-600 hover:text-white hover:bg-red-600 border-red-600'
+                              }`}
+                              disabled={isImmutable}
+                            >
+                              Delete
+                            </button>
+                          )}
+                        </div>
                       </div>
                     </div>
                   );

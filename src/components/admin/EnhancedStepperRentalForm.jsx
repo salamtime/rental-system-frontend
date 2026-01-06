@@ -955,6 +955,9 @@ const useRentalWizard = (initialData = null, mode = 'create') => {
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
         if (!emailRegex.test(formData.customer_email.trim())) {
           newErrors.customer_email = 'Please enter a valid email address';
+    if (!formData.customer_licence_number?.trim()) {
+      newErrors.customer_licence_number = 'Driver\'s license number is required';
+    }
         }
       }
     } else if (step === 2) {
@@ -2691,14 +2694,29 @@ const SimplifiedRentalWizard = ({
             <div className="flex-1 flex gap-3 justify-end">
               {currentStep < 3 ? (
                 <button
-                  type="button"
-                  onClick={handleNext}
-                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center justify-center flex-1 sm:flex-none"
-                  disabled={submitting || isSubmitting || successfullySubmitted}
-                >
-                  Next
-                  <ChevronRight className="w-4 h-4 ml-1" />
-                </button>
+                type="button"
+                onClick={handleNext}
+                disabled={submitting || isSubmitting || successfullySubmitted || (currentStep === 1 && !formData.customer_licence_number?.trim())}
+                className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium flex items-center justify-center flex-1 sm:flex-none disabled:opacity-50 disabled:cursor-not-allowed"
+                title={currentStep === 1 && !formData.customer_licence_number?.trim() ? "Please enter driver's license first" : ""}
+              >
+                {submitting || isSubmitting ? (
+                  <>
+                    <Loader className="w-4 h-4 mr-2 animate-spin" />
+                    Loading...
+                  </>
+                ) : currentStep === 1 && !formData.customer_licence_number?.trim() ? (
+                  <>
+                    <AlertCircle className="w-4 h-4 mr-2" />
+                    Enter License
+                  </>
+                ) : (
+                  <>
+                    Next
+                    <ChevronRight className="w-4 h-4 ml-1" />
+                  </>
+                )}
+              </button>
               ) : (
                 <button
                   type="submit"

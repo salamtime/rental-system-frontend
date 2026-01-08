@@ -2489,7 +2489,7 @@ Please ensure camera permissions are granted.`);
         .update({
           total_amount: newPrice,
           remaining_amount: Math.max(0, newPrice - (parseFloat(rental.deposit_amount) || 0)),
-          approval_status: 'auto',
+          approval_status: 'approved',
           pending_total_request: null,
           updated_at: new Date().toISOString()
         })
@@ -2625,9 +2625,14 @@ Please ensure camera permissions are granted.`);
   const isPendingApproval = rental.approval_status === 'pending';
   const isAdmin = canApprovePriceOverrides(currentUser);
   
-  const canSignContract = hasOpeningVideo && !rental.contract_signed && !rental.signature_url;
+  const canSignContract = hasOpeningVideo && hasOdometerReading && isPaymentSufficient() && !rental.contract_signed && !rental.signature_url;
   const canSendWhatsApp = rental.contract_signed || !!rental.signature_url;
   const canGenerateInvoice = rental.contract_signed || !!rental.signature_url;
+
+  // Check if workflow should be disabled (pending approval for non-admin users)
+  const isWorkflowDisabled = () => {
+    return isPendingApproval && !isAdmin;
+  };
 
   const formattedRentalForInvoice = {
     ...rental,
@@ -2650,7 +2655,12 @@ Please ensure camera permissions are granted.`);
               <Button
                 disabled={!canSignContract}
                 onClick={() => setIsSigning(true)}
-                title={!hasOpeningVideo ? "Please upload opening video before signing" : "Sign contract"}
+                title={
+                  !hasOpeningVideo ? "Please upload opening video before signing" :
+                  !hasOdometerReading ? "Please enter starting odometer before signing" :
+                  !isPaymentSufficient() ? "Payment must be completed before signing" :
+                  "Sign contract"
+                }
               >
                   <FileSignature className="w-4 h-4 mr-2" />
                   Sign Contract
@@ -2717,6 +2727,20 @@ Please ensure camera permissions are granted.`);
                 </h3>
                 <p className="text-sm text-gray-600">Complete these steps to begin the rental:</p>
               </div>
+              {/* Warning banner when approval is pending */}
+              {isPendingApproval && !isAdmin && (
+                <div className="mb-4 p-3 bg-yellow-100 border border-yellow-300 rounded-lg">
+                  <div className="flex items-center gap-2">
+                    <Clock className="w-4 h-4 text-yellow-600" />
+                    <div>
+                      <p className="font-medium text-yellow-800">Price Override Pending Approval</p>
+                      <p className="text-sm text-yellow-700">
+                        Rental workflow is locked until admin approves the price change.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className="space-y-4">
                 {/* Step 1: Upload Opening Video */}
@@ -2736,6 +2760,8 @@ Please ensure camera permissions are granted.`);
                     {!hasOpeningVideo && (
                       <Button 
                         onClick={() => setOpeningModalOpen(true)}
+                        disabled={isWorkflowDisabled()}
+                        title={isWorkflowDisabled() ? "Workflow locked - price approval pending" : "Upload Video"}
                         size="sm"
                         className="mt-2 bg-blue-600 hover:bg-blue-700 text-white"
                       >
@@ -2763,6 +2789,8 @@ Please ensure camera permissions are granted.`);
                     {!hasOdometerReading && !isEditingOdometer && (
                       <Button 
                         onClick={() => setIsEditingOdometer(true)}
+                        disabled={isWorkflowDisabled()}
+                        title={isWorkflowDisabled() ? "Workflow locked - price approval pending" : "Add Reading"}
                         size="sm"
                         className="mt-2 bg-blue-600 hover:bg-blue-700 text-white"
                       >
@@ -2780,11 +2808,12 @@ Please ensure camera permissions are granted.`);
                           className="w-full px-3 py-2 text-sm border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
                           min="0"
                           step="1"
+                          disabled={isWorkflowDisabled()}
                         />
                         <div className="flex flex-col sm:flex-row gap-2">
                           <Button 
                             onClick={handleSaveOdometer}
-                            disabled={isSavingOdometer}
+                            disabled={isSavingOdometer || isWorkflowDisabled()}
                             size="sm"
                             className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white"
                           >
@@ -2827,10 +2856,18 @@ Please ensure camera permissions are granted.`);
                 </div>
 
                 {/* Step 3: Payment */}
-                <div className={`flex items-start gap-3 p-3 rounded-lg ${isPaymentSufficient() ? 'bg-green-50 border border-green-200' : 'bg-gray-50 border border-gray-200'}`}>
-                  <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${isPaymentSufficient() ? 'bg-green-500' : 'bg-gray-300'}`}>
+                <div className={`flex items-start gap-3 p-3 rounded-lg ${
+  isPaymentSufficient() ? 'bg-green-50 border border-green-200' : 
+  isPendingApproval && !isAdmin ? 'bg-yellow-50 border border-yellow-200' : 'bg-gray-50 border border-gray-200'
+}`}>
+                  <div className={`flex-shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
+    isPaymentSufficient() ? 'bg-green-500' : 
+    isPendingApproval && !isAdmin ? 'bg-yellow-500' : 'bg-gray-300'
+  }`}>
                     {isPaymentSufficient() ? (
                       <CheckCircle className="w-5 h-5 text-white" />
+                    ) : isPendingApproval && !isAdmin ? (
+                      <Clock className="w-4 h-4 text-white" />
                     ) : (
                       <span className="text-white font-bold">3</span>
                     )}
@@ -2838,9 +2875,15 @@ Please ensure camera permissions are granted.`);
                   <div className="flex-1">
                     <h4 className="font-semibold text-sm sm:text-base">Payment</h4>
                     <p className="text-xs sm:text-sm text-gray-600 mt-1">
-                      {isPaymentSufficient() ? '✓ Payment received' : 'Complete rental payment'}
+                      {isPendingApproval && !isAdmin ? (
+                        <span className="text-yellow-600">⏳ Price override pending approval</span>
+                      ) : isPaymentSufficient() ? (
+                        '✓ Payment received'
+                      ) : (
+                        'Complete rental payment'
+                      )}
                     </p>
-                    {!isPaymentSufficient() && (
+                    {!isPaymentSufficient() && !(isPendingApproval && !isAdmin) && (
                       <Button 
                         onClick={markAsPaid}
                         disabled={isUpdatingPayment}
@@ -2871,10 +2914,10 @@ Please ensure camera permissions are granted.`);
                     {!rental.contract_signed && !rental.signature_url && rental.rental_status !== 'completed' && (
                       <Button 
                         onClick={() => setIsSigning(true)}
-                        disabled={!hasOpeningVideo}
+                        disabled={!canSignContract || isWorkflowDisabled()}
                         size="sm"
                         className="mt-2"
-                        title={!hasOpeningVideo ? "Please upload opening video first" : "Sign contract"}
+                        title={isWorkflowDisabled() ? "Workflow locked - price approval pending" : !hasOpeningVideo ? "Please upload opening video first" : "Sign contract"}
                       >
                         <FileSignature className="w-4 h-4 mr-2" />
                         Sign Contract
@@ -2891,10 +2934,15 @@ Please ensure camera permissions are granted.`);
                       className="bg-green-600 hover:bg-green-700 text-white px-8 py-6 text-lg font-semibold shadow-lg"
                     >
                       <PlayCircle className="w-6 h-6 mr-2" />
-                      Start Rental Now
+                      {isWorkflowDisabled() ? "Awaiting Approval" : "Start Rental Now"}
                     </Button>
                   </div>
                 )}
+          {isWorkflowDisabled() && (
+            <p className="text-sm text-yellow-600 mt-2">
+              ⏳ Rental start is locked until price override is approved by admin
+            </p>
+          )}
               </div>
             </div>
           )}
@@ -4522,31 +4570,6 @@ Breakdown:
       </div>
 
       <div className="sm:hidden fixed bottom-0 left-0 right-0 bg-white border-t p-2 z-10 flex flex-col gap-2">
-        <div className="flex justify-center gap-2">
-          {isScheduled && (
-            <Button onClick={cancelRental} variant="destructive" className="flex-1">
-              <XCircle className="w-4 h-4 mr-1" /> Cancel
-            </Button>
-          )}
-          {isActive && (
-            <Button onClick={cancelRental} variant="destructive" className="flex-1">
-              <XCircle className="w-4 h-4 mr-1" /> Cancel
-            </Button>
-          )}
-        </div>
-        <div className="flex justify-center gap-2">
-          {!rental.contract_signed && !rental.signature_url && rental.rental_status !== 'completed' && (
-            <Button 
-              onClick={() => setIsSigning(true)} 
-              disabled={!canSignContract}
-              className="flex-1"
-              title={!hasOpeningVideo ? "Upload opening video first" : "Sign contract"}
-            >
-              <FileSignature className="w-4 h-4 mr-1" />
-              Sign
-            </Button>
-          )}
-        </div>
         <div className="grid grid-cols-3 gap-1 mb-2">
           <Button
             onClick={() => setContractPreviewModal(true)}
@@ -4580,7 +4603,7 @@ Breakdown:
             WhatsApp
           </Button>
         </div>
-                <div className="flex gap-2">
+        <div className="flex gap-2">
             {(() => {
                 const totalAmount = calculateRentalBaseAmount() + (rental.overage_charge || 0) + (totalExtensionFees || 0);
                 const depositPaid = rental.deposit_amount || 0;
@@ -4594,7 +4617,8 @@ Breakdown:
                 return rental.payment_status?.toLowerCase() !== 'paid' && !isPendingApproval && !isBalanceCoveredByDeposit && (
                 <Button 
                     onClick={markAsPaid} 
-                    disabled={isUpdatingPayment} 
+                    disabled={isUpdatingPayment || isWorkflowDisabled()}
+                    title={isWorkflowDisabled() ? "Workflow locked - price approval pending" : "Mark as Paid"}
                     className="flex-1 bg-green-600 hover:bg-green-700 text-white font-semibold"
                 >
                     <CreditCard className="w-4 h-4 mr-1" />
@@ -4611,7 +4635,6 @@ Breakdown:
                 const isBalanceCoveredByDeposit = balanceDue > 0 && rental.deposit_returned_at && Math.abs((damageDeposit - balanceDue) - depositToReturn) < 0.01;
                 
                 if (isBalanceCoveredByDeposit) {
-
                   return (
                     <span className="text-sm text-green-600 flex items-center justify-center gap-1 w-full">
                       <CheckCircle className="w-4 h-4" />
@@ -4621,27 +4644,6 @@ Breakdown:
                 }
                 return null;
             })()}
-            {/* Mobile Preview Buttons */}
-<div className="grid grid-cols-3 gap-1 mb-2">
-  <Button
-    onClick={() => setContractPreviewModal(true)}
-    disabled={!rental.signature_url}
-    className="text-xs py-2 h-auto"
-    size="sm"
-  >
-    <FileText className="w-3 h-3 mr-1" />
-    Contract
-  </Button>
-  <Button
-    onClick={() => setReceiptPreviewModal(true)}
-    disabled={rental.payment_status !== 'paid'}
-    className="text-xs py-2 h-auto"
-    size="sm"
-  >
-    <Receipt className="w-3 h-3 mr-1" />
-    Receipt
-  </Button>
-</div>
         </div>
       </div>
     </div>

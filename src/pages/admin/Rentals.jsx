@@ -7,7 +7,7 @@ import VideoContractModal from '../../components/VideoContractModal';
 import VehicleAvailabilityService from '../../services/VehicleAvailabilityService';
 import ViewCustomerDetailsDrawer from '../../components/admin/ViewCustomerDetailsDrawer';
 import { getPaymentStatusStyle } from '../../config/statusColors';
-import { Plus, Clock, List, Grid, LayoutGrid } from 'lucide-react';
+import { Plus, Clock, List, Grid, LayoutGrid, CheckCircle, XCircle } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTimer } from '../../hooks/useTimer';
 
@@ -279,6 +279,16 @@ const Rentals = () => {
         }, 
         (payload) => {
           console.log('Rental change detected:', payload);
+          
+          // Check if approval_status changed for real-time badge updates
+          if (payload.eventType === 'UPDATE' && payload.new?.approval_status !== payload.old?.approval_status) {
+            console.log('🔄 Approval status updated, refreshing rentals...', {
+              old: payload.old?.approval_status,
+              new: payload.new?.approval_status,
+              rentalId: payload.new?.id
+            });
+          }
+          
           fetchRentals(statusFilter, paymentStatusFilter);
           fetchAvailabilityData();
         }
@@ -866,6 +876,24 @@ const Rentals = () => {
                                   Pending
                                 </span>
                               )}
+                              {rental.approval_status === 'approved' && (
+                                <span 
+                                  className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full bg-green-50 text-green-700 border border-green-300"
+                                  title="Price override approved"
+                                >
+                                  <CheckCircle className="w-3 h-3" />
+                                  Approved
+                                </span>
+                              )}
+                              {rental.approval_status === 'declined' && (
+                                <span 
+                                  className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full bg-red-50 text-red-700 border border-red-300"
+                                  title="Price override declined"
+                                >
+                                  <XCircle className="w-3 h-3" />
+                                  Declined
+                                </span>
+                              )}
                             </div>
                           </td>
                           <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
@@ -1052,6 +1080,24 @@ const Rentals = () => {
                               >
                                 <Clock className="w-3 h-3" />
                                 Pending
+                              </span>
+                            )}
+                            {rental.approval_status === 'approved' && (
+                              <span 
+                                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full bg-green-50 text-green-700 border border-green-300"
+                                title="Price override approved"
+                              >
+                                <CheckCircle className="w-3 h-3" />
+                                Approved
+                              </span>
+                            )}
+                            {rental.approval_status === 'declined' && (
+                              <span 
+                                className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium rounded-full bg-red-50 text-red-700 border border-red-300"
+                                title="Price override declined"
+                              >
+                                <XCircle className="w-3 h-3" />
+                                Declined
                               </span>
                             )}
                           </div>
@@ -1256,6 +1302,18 @@ const Rentals = () => {
                             <div className="flex items-center gap-1 text-[10px] text-yellow-700 bg-yellow-50 px-2 py-1 rounded">
                               <Clock className="w-3 h-3" />
                               <span>Pending: {rental.pending_total_request} MAD</span>
+                            </div>
+                          )}
+                          {rental.approval_status === 'approved' && (
+                            <div className="flex items-center gap-1 text-[10px] text-green-700 bg-green-50 px-2 py-1 rounded">
+                              <CheckCircle className="w-3 h-3" />
+                              <span>Approved</span>
+                            </div>
+                          )}
+                          {rental.approval_status === 'declined' && (
+                            <div className="flex items-center gap-1 text-[10px] text-red-700 bg-red-50 px-2 py-1 rounded">
+                              <XCircle className="w-3 h-3" />
+                              <span>Declined</span>
                             </div>
                           )}
                         </div>

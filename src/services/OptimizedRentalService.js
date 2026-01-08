@@ -76,7 +76,7 @@ class OptimizedRentalService {
     try {
       const startTime = Date.now();
       
-      // Build optimized query with selective JOINs
+      // Build optimized query with selective JOINs including extensions
       let query = supabase
         .from(TBL.RENTALS)
         .select(`
@@ -87,7 +87,8 @@ class OptimizedRentalService {
             model,
             plate_number,
             status
-          )
+          ),
+          extensions:rental_extensions!rental_extensions_rental_id_fkey(id, extension_hours, status, created_at)
         `, { count: 'exact' });
 
       // Apply filters efficiently
@@ -204,7 +205,8 @@ class OptimizedRentalService {
             plate_number,
             status,
             image_url
-          )
+          ),
+          extensions:rental_extensions!rental_extensions_rental_id_fkey(id, extension_hours, status, created_at)
         `)
         .eq('id', id)
         .single();

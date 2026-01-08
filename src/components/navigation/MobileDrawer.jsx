@@ -2,61 +2,30 @@ import React, { Fragment, useEffect } from "react";
 import { Dialog, Transition } from '@headlessui/react';
 
 export default function MobileDrawer({ open, onClose, title = "Rental Manager", items = [], footer }) {
-  // Lock the REAL scroll container - definitive fix
+  // Lock background scroll when drawer opens
   useEffect(() => {
     if (!open) return;
 
-    // 1) Find the actual scroll container
-    const scrollRoot = 
-      document.querySelector('[data-scroll-root]') ||  // Custom marked container
-      document.querySelector('#root') ||               // React root
-      document.scrollingElement ||                     // Standard (usually html)
-      document.documentElement ||                      // Fallback
-      document.body;                                   // Last resort
-
-    const isWindowRoot = (scrollRoot === document.body || scrollRoot === document.documentElement);
-    const savedScrollPos = isWindowRoot ? window.scrollY : scrollRoot.scrollTop;
-    const originalStyle = scrollRoot.style.cssText;
-
-    // 2) Hard lock the background - prevent ALL scrolling
-    const preventScroll = (e) => e.preventDefault();
+    // Save current scroll position
+    const scrollY = window.scrollY;
     
-    // Add global scroll prevention
-    document.addEventListener('touchmove', preventScroll, { passive: false });
-    document.addEventListener('wheel', preventScroll, { passive: false });
-    document.addEventListener('scroll', preventScroll, { passive: false });
+    // Lock background scroll
+    document.body.style.position = 'fixed';
+    document.body.style.top = `-${scrollY}px`;
+    document.body.style.left = '0';
+    document.body.style.right = '0';
+    document.body.style.width = '100%';
+    document.body.style.overflow = 'hidden';
 
-    // 3) Apply scroll lock to the real container
-    if (isWindowRoot) {
-      // Window scrolling - lock body with position fixed
-      document.body.style.position = 'fixed';
-      document.body.style.top = `-${savedScrollPos}px`;
-      document.body.style.left = '0';
-      document.body.style.right = '0';
-      document.body.style.width = '100%';
-      document.body.style.overflow = 'hidden';
-    } else {
-      // Container scrolling - lock the container
-      scrollRoot.style.overflow = 'hidden';
-      scrollRoot.style.height = '100%';
-    }
-
-    // 4) Cleanup function
+    // Cleanup: restore scroll when drawer closes
     return () => {
-      // Remove event listeners
-      document.removeEventListener('touchmove', preventScroll);
-      document.removeEventListener('wheel', preventScroll);
-      document.removeEventListener('scroll', preventScroll);
-      
-      // Restore original styles
-      scrollRoot.style.cssText = originalStyle;
-      
-      // Restore scroll position
-      if (isWindowRoot) {
-        window.scrollTo(0, savedScrollPos);
-      } else {
-        scrollRoot.scrollTop = savedScrollPos;
-      }
+      document.body.style.position = '';
+      document.body.style.top = '';
+      document.body.style.left = '';
+      document.body.style.right = '';
+      document.body.style.width = '';
+      document.body.style.overflow = '';
+      window.scrollTo(0, scrollY);
     };
   }, [open]);
 
@@ -65,7 +34,7 @@ export default function MobileDrawer({ open, onClose, title = "Rental Manager", 
   return (
     <Transition show={open} as={Fragment}>
       <Dialog onClose={onClose} className="relative z-[1000]">
-        {/* Background overlay - swallows all background input */}
+        {/* Background overlay */}
         <Transition.Child
           as={Fragment}
           enter="ease-out duration-300"
@@ -75,12 +44,7 @@ export default function MobileDrawer({ open, onClose, title = "Rental Manager", 
           leaveFrom="opacity-100"
           leaveTo="opacity-0"
         >
-          <div 
-            className="rm-overlay" 
-            onTouchMove={(e) => e.preventDefault()}
-            onWheel={(e) => e.preventDefault()}
-            onScroll={(e) => e.preventDefault()}
-          />
+          <div className="rm-overlay" />
         </Transition.Child>
 
         {/* Drawer panel */}
@@ -106,12 +70,8 @@ export default function MobileDrawer({ open, onClose, title = "Rental Manager", 
                     <button className="rm-close" aria-label="Close" onClick={onClose}>✕</button>
                   </header>
 
-                  {/* Body - ONLY scrollable area with proper constraints */}
-                  <nav 
-                    className="rm-drawer__body"
-                    onTouchMove={(e) => e.stopPropagation()} // Allow inner scroll
-                    onWheel={(e) => e.stopPropagation()}     // Allow inner scroll
-                  >
+                  {/* Body - Scrollable area */}
+                  <nav className="rm-drawer__body">
                     {items.map((it, i) =>
                       it?.divider ? (
                         <hr key={`div-${i}`} className="rm-divider" />

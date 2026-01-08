@@ -20,37 +20,57 @@ import { MoreHorizontal, Clock } from "lucide-react";
 import { supabase } from "../../lib/supabase";
 import { useAuth } from "../../contexts/AuthContext";
 
-// Helper function to format rental periods - SHOW DATES ONLY
+// Helper function to format rental periods with proper time handling
 const formatRentalPeriod = (rental) => {
-  // Format date only - NO TIME for daily rentals
-  const formatDateOnly = (dateStr) => {
-    if (!dateStr) return 'N/A';
-    try {
-      const date = new Date(dateStr);
-      // Return DD/MM/YYYY format
-      const day = String(date.getDate()).padStart(2, '0');
-      const month = String(date.getMonth() + 1).padStart(2, '0');
-      const year = date.getFullYear();
-      return `${day}/${month}/${year}`;
-    } catch (error) {
-      return 'N/A';
-    }
-  };
+    // Clean helper function - only format dates
+    const formatDateOnly = (dateStr) => {
+        if (!dateStr) return 'N/A';
+        try {
+            const date = new Date(dateStr);
+            return date.toLocaleDateString('en-CA'); // Returns YYYY-MM-DD
+        } catch (error) {
+            console.error('Date formatting error:', error);
+            return 'N/A';
+        }
+    };
+    
+    const formatTimeOnly = (timeStr) => {
+        if (!timeStr) return null;
+        // Extract HH:MM from time string
+        return timeStr.substring(0, 5);
+    };
 
-  const startDate = formatDateOnly(rental.rental_start_date);
-  const endDate = rental.rental_end_date ? formatDateOnly(rental.rental_end_date) : 'Ongoing';
-  
-  return `${startDate} to ${endDate}`;
+    // Only show time for hourly rentals
+    if (rental.rental_type === 'hourly') {
+        const startDate = formatDateOnly(rental.rental_start_date);
+        const startTime = formatTimeOnly(rental.rental_start_time);
+        const endDate = formatDateOnly(rental.rental_end_date);
+        const endTime = formatTimeOnly(rental.rental_end_time);
+        
+        // Build display strings
+        const startDisplay = startDate && startTime ? `${startDate} ${startTime}` : 'N/A';
+        const endDisplay = endDate && endTime ? `${endDate} ${endTime}` : 'Ongoing';
+        
+        return `${startDisplay} - ${endDisplay}`;
+    } else {
+        // For daily/weekly/monthly rentals, show ONLY dates, NO times
+        const startDate = formatDateOnly(rental.rental_start_date);
+        const endDate = formatDateOnly(rental.rental_end_date);
+        
+        // Return simple date range WITHOUT time
+        return `${startDate} to ${endDate === 'N/A' ? 'Ongoing' : endDate}`;
+    }
+};
+    }
 };
 
 // Helper function to format the rental ID
 const formatRentalId = (id) => {
-  if (!id) return 'N/A';
-  const year = new Date().getFullYear();
-  const idSnippet = id.split('-')[0];
-  return `RNT-${year}-${idSnippet}`;
+    if (!id) return 'N/A';
+    const year = new Date().getFullYear();
+    const idSnippet = id.split('-')[0];
+    return `RNT-${year}-${idSnippet}`;
 };
-
 // Helper function to calculate time remaining with extensions - MATCHING RentalDetails
 const calculateTimeRemaining = (rental) => {
   if (!rental.rental_end_date || rental.rental_status !== 'active') return null;
@@ -59,7 +79,8 @@ const calculateTimeRemaining = (rental) => {
   let endDate = new Date(rental.rental_end_date);
   
   // If rental has end time, add it to the end date
-  if (rental.rental_end_time) {
+  if (rental.rental_end_time && rental.rental_type !== 'hourly') {
+    // For daily rentals, use the specific end time from the database
     const [hours, minutes, seconds] = rental.rental_end_time.split(':').map(Number);
     endDate.setHours(hours, minutes, seconds || 0);
   }
@@ -75,17 +96,15 @@ const calculateTimeRemaining = (rental) => {
   
   if (diff <= 0) return 'Expired';
   
-  const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-  const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+  const hours = Math.floor(diff / (1000 * 60 * 60));
   const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
   
-  // Format like RentalDetails: "1h 41m" or "1d 2h 52m"
-  if (days > 0) {
-    return `${days}d ${hours}h ${minutes}m`;
-  } else {
-    return `${hours}h ${minutes}m`;
-  }
+  // Match RentalDetails format: "1h 46m"
+  return `${hours}h ${minutes}m`;
 };
+  return `${hours}h ${minutes}m`;
+};
+
 
 export default function RentalList() {
   const [rentals, setRentals] = useState([]);
@@ -123,12 +142,7 @@ export default function RentalList() {
       setRentals(data || []);
     } catch (err) {
       setError(err.message);
-      console.error("❌ Supabase Error", { 
-        message: err.message, 
-        details: err.details, 
-        hint: err.hint, 
-        code: err.code 
-      });
+      console.error("❌ Supabase Error", { message: err.message, details: err.details, hint: err.hint, code: err.code });
     } finally {
       setLoading(false);
     }
@@ -177,10 +191,19 @@ export default function RentalList() {
   // Check if current user can delete a rental - ONLY OWNER role
   const canDelete = () => {
     if (!user?.id) return false;
+    
+    // CRITICAL: Only allow 'owner' role to delete rentals
+    console.log('🔐 Delete permission check:', {
+      userId: user.id,
+      userRole: user.role,
+      canDelete: user.role === 'owner'
+    });
+    
     return user.role === 'owner';
   };
 
   const handleDelete = async (rentalId) => {
+    // Double-check owner permission before delete
     if (user?.role !== 'owner') {
       alert('Only owners can delete rentals.');
       return;
@@ -198,6 +221,7 @@ export default function RentalList() {
 
       if (deleteError) throw deleteError;
 
+      // Remove from local state
       setRentals(rentals.filter(r => r.id !== rentalId));
       alert('Rental deleted successfully.');
     } catch (err) {
@@ -206,16 +230,19 @@ export default function RentalList() {
     }
   };
 
-  // Get display status - prioritize payment_status, fallback to rental_status
+  // ✅ FIXED: Get display status - prioritize payment_status, fallback to rental_status
   const getDisplayStatus = (rental) => {
+    // Priority 1: Use payment_status if it exists and is meaningful
     if (rental.payment_status && rental.payment_status !== 'unknown') {
       return rental.payment_status;
     }
     
+    // Priority 2: Use rental_status if it exists
     if (rental.rental_status) {
       return rental.rental_status;
     }
     
+    // Priority 3: Default to 'pending' only if both are null/empty
     return 'pending';
   };
 
@@ -276,16 +303,12 @@ export default function RentalList() {
           {rentals.length > 0 ? (
             rentals.map((rental) => {
               const displayStatus = getDisplayStatus(rental);
-              const timeRemaining = calculateTimeRemaining(rental);
-              
               return (
                 <TableRow key={rental.id}>
                   <TableCell>{formatRentalId(rental.id)}</TableCell>
                   <TableCell>
                     <div className="font-medium">{rental.customer_name || 'N/A'}</div>
-                    <Link to="#" className="text-sm text-muted-foreground hover:underline">
-                      View Customer Details
-                    </Link>
+                    <Link to="#" className="text-sm text-muted-foreground hover:underline">View Customer Details</Link>
                   </TableCell>
                   <TableCell>
                     <div className="font-medium">{rental.vehicle?.name || "N/A"}</div>
@@ -295,9 +318,9 @@ export default function RentalList() {
                   <TableCell>
                     <div className="space-y-1">
                       <div>{formatRentalPeriod(rental)}</div>
-                      {rental.rental_status === 'active' && timeRemaining && (
+                      {rental.rental_status === 'active' && rental.rental_end_date && (
                         <div className="text-xs text-blue-600 font-medium">
-                          ⏱️ {timeRemaining}
+                          ⏱️ {calculateTimeRemaining(rental)}
                         </div>
                       )}
                     </div>
@@ -329,9 +352,7 @@ export default function RentalList() {
                   <TableCell className="text-right">
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <Button variant="ghost" size="icon">
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
+                        <Button variant="ghost" size="icon"><MoreHorizontal className="h-4 w-4" /></Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
                         <DropdownMenuItem>Details</DropdownMenuItem>
@@ -353,9 +374,7 @@ export default function RentalList() {
             })
           ) : (
             <TableRow>
-              <TableCell colSpan={9} className="text-center">
-                No rentals found.
-              </TableCell>
+              <TableCell colSpan="9" className="text-center">No rentals found.</TableCell>
             </TableRow>
           )}
         </TableBody>

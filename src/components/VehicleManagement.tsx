@@ -1374,7 +1374,8 @@ const VehicleManagement: React.FC = () => {
                 >
                   <option value="all">All Status</option>
                   <option value="available">Available</option>
-                  <option value="rented">Rented</option>
+<option value="scheduled">Scheduled</option>
+<option value="rented">Rented</option>
                   <option value="maintenance">Maintenance</option>
                   <option value="out_of_service">Out of Service</option>
                 </select>

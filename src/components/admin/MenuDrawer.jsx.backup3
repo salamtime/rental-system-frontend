@@ -175,12 +175,17 @@ const MenuDrawer = ({
     }
   };
 
+  const handleOverlayTouchMove = (e) => {
+    e.preventDefault();
+  };
+
   if (!isOpen) return null;
 
   const menuContent = (
     <div 
       className="fixed inset-0 z-[9999] flex"
       onClick={handleOverlayClick}
+      onTouchMove={handleOverlayTouchMove}
       data-menu-drawer
       role="dialog"
       aria-modal="true"
@@ -196,9 +201,10 @@ const MenuDrawer = ({
       <div 
         className="relative flex flex-col w-80 max-w-[85vw] bg-white shadow-xl"
         style={{
-          height: '100dvh',
-          minHeight: '100vh'
+          height: '100dvh', // Modern viewport height
+          minHeight: '100vh' // Fallback
         }}
+        onClick={(e) => e.stopPropagation()}
       >
         {/* Header - Static */}
         <div className="flex-shrink-0 h-16 border-b border-gray-200 flex items-center justify-between px-4">
